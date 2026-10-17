@@ -51,8 +51,9 @@ export function createExhaust(scene: THREE.Scene) {
     depthWrite: false,
     depthTest: true,
     side: THREE.DoubleSide,
-    uniforms: { light: { value: 1 } },
+    uniforms: { light: { value: 1 }, nearPlane: { value: 0.1 } },
     vertexShader: `
+      uniform float nearPlane;
       attribute float gasLife;
       attribute float gasSeed;
       attribute float gasGround;
@@ -60,9 +61,13 @@ export function createExhaust(scene: THREE.Scene) {
       varying float age;
       varying float seed;
       varying float groundCloud;
+      varying float cameraFade;
       void main() {
         puffUv = uv; age = gasLife; seed = gasSeed; groundCloud = gasGround;
-        gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        vec4 viewPosition = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+        // Fade before a close camera clips through the particle plane.
+        cameraFade = smoothstep(nearPlane, nearPlane + 1.2, -viewPosition.z);
+        gl_Position = projectionMatrix * viewPosition;
       }
     `,
     fragmentShader: `
@@ -71,6 +76,7 @@ export function createExhaust(scene: THREE.Scene) {
       varying float age;
       varying float seed;
       varying float groundCloud;
+      varying float cameraFade;
       float hash(vec2 p) { return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
       float noise(vec2 p) {
         vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);
@@ -82,7 +88,7 @@ export function createExhaust(scene: THREE.Scene) {
                          + noise(p*9.0 - age*5.0 + seed) * 0.35;
         float edge = 1.0 - smoothstep(0.2, 1.0, length(p) + (turbulence-0.5)*0.3);
         float density = edge * (0.55 + turbulence*0.45);
-        float alpha = density * pow(1.0-age, mix(1.6, 1.15, groundCloud)) * mix(0.48, 0.34, groundCloud);
+        float alpha = density * pow(1.0-age, mix(1.6, 1.15, groundCloud)) * mix(0.48, 0.34, groundCloud) * cameraFade;
         if (alpha < 0.004) discard;
         // Neutral condensation, not an emissive flame. A shaded edge preserves
         // contrast against the sky while the core reads against dark scenery.
@@ -110,6 +116,7 @@ export function createExhaust(scene: THREE.Scene) {
     size: 0,
     seed: 0,
     grounded: false,
+    depth: 0,
   }));
   let cursor = 0;
   const origin = new THREE.Vector3();
@@ -126,12 +133,13 @@ export function createExhaust(scene: THREE.Scene) {
   const emissionDirection = new THREE.Vector3();
   const surfaceNormal = new THREE.Vector3();
   const radialFlow = new THREE.Vector3();
+  const cameraDirection = new THREE.Vector3();
 
   return {
     update(
       dt: number,
       car: THREE.Object3D,
-      camera: THREE.Camera,
+      camera: THREE.PerspectiveCamera,
       outlets: GasOutlet[],
       velocity: THREE.Vector3,
       lift: number,
@@ -225,6 +233,7 @@ export function createExhaust(scene: THREE.Scene) {
         previousOutlets.set(outlet, previous);
       }
       sorted.length = 0;
+      camera.getWorldDirection(cameraDirection);
       for (const p of particles) {
         if (p.age >= p.lifetime) continue;
         if (dt > 0) {
@@ -277,14 +286,12 @@ export function createExhaust(scene: THREE.Scene) {
             );
           }
         }
+        p.depth = p.position.dot(cameraDirection);
         sorted.push(p);
       }
       // Normal alpha blending needs back-to-front order, including overlapping jets.
-      sorted.sort(
-        (a, b) =>
-          b.position.distanceToSquared(camera.position) -
-          a.position.distanceToSquared(camera.position),
-      );
+      // View depth keeps off-axis puffs in order in the close driver camera.
+      sorted.sort((a, b) => b.depth - a.depth);
       sorted.forEach((p, i) => {
         const age = p.age / p.lifetime;
         transform.position.copy(p.position);
@@ -303,6 +310,7 @@ export function createExhaust(scene: THREE.Scene) {
       mesh.instanceMatrix.needsUpdate = true;
       life.needsUpdate = seeds.needsUpdate = groundMist.needsUpdate = true;
       material.uniforms.light.value = night ? 0.6 : 1;
+      material.uniforms.nearPlane.value = camera.near;
     },
     clear() {
       for (const p of particles) p.age = p.lifetime;

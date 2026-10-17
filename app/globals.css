@@ -530,6 +530,7 @@ a {
   font-size: 11px;
   white-space: nowrap;
   animation: appear 0.25s ease-out;
+  pointer-events: none;
 }
 .pause-indicator {
   position: absolute;
@@ -755,11 +756,14 @@ a {
     font-size: 22px;
   }
   .toast {
-    bottom: calc(300px + var(--mobile-bottom));
+    top: calc(80px + env(safe-area-inset-top, 0px));
+    bottom: auto;
     font-size: 10px;
+    line-height: 1.4;
     white-space: normal;
     text-align: center;
-    max-width: 85%;
+    width: max-content;
+    max-width: min(320px, calc(100% - var(--mobile-left) - var(--mobile-right)));
   }
   .panel {
     width: min(620px, 100%);
@@ -930,11 +934,6 @@ a {
   }
   .altitude-controls {
     bottom: calc(224px + var(--mobile-bottom, 0px));
-  }
-  .toast {
-    bottom: auto;
-    top: calc(80px + env(safe-area-inset-top, 0px));
-    max-width: 45%;
   }
   .pause-indicator {
     top: max(16px, env(safe-area-inset-top));
