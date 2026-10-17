@@ -243,12 +243,15 @@ export default function Roadster() {
     const unlock = () => unlockAudio();
     window.addEventListener("pointerdown", unlock);
     window.addEventListener("keydown", unlock);
-    const silence = () =>
+    const silence = () => {
+      control.current.keys.clear();
+      control.current.boost = false;
       audio.current?.update(
         { speed: 0, distance: 0, altitude: 0, charge: 0 },
         false,
         true,
       );
+    };
     document.addEventListener("visibilitychange", silence);
     window.addEventListener("blur", silence);
     return () => {
@@ -526,6 +529,7 @@ export default function Roadster() {
               }}
               onPointerUp={() => control.current.keys.delete(key)}
               onPointerCancel={() => control.current.keys.delete(key)}
+              onLostPointerCapture={() => control.current.keys.delete(key)}
             >
               <kbd>{key.toUpperCase()}</kbd>
               {label}
@@ -548,6 +552,7 @@ export default function Roadster() {
               }}
               onPointerUp={() => control.current.keys.delete(key)}
               onPointerCancel={() => control.current.keys.delete(key)}
+              onLostPointerCapture={() => control.current.keys.delete(key)}
             >
               {label}
             </button>
@@ -564,10 +569,11 @@ export default function Roadster() {
               onPointerDown={(e) => {
                 e.currentTarget.setPointerCapture(e.pointerId);
                 control.current.keys.add(key);
-                update({ cruise: false });
+                if (key !== "shift") update({ cruise: false });
               }}
               onPointerUp={() => control.current.keys.delete(key)}
               onPointerCancel={() => control.current.keys.delete(key)}
+              onLostPointerCapture={() => control.current.keys.delete(key)}
             >
               {label}
             </button>
@@ -715,6 +721,12 @@ export default function Roadster() {
             {panel === "help" && (
               <>
                 <p>No score to chase. Just a road to follow.</p>
+                <div className="touch-guide">
+                  Hold the arrows to steer and Go or Brake to change speed.
+                  Hold Boost for extra speed. You can steer and use a pedal at
+                  the same time. Tap lift off to fly, then hold climb or descend
+                  to change altitude. Auto cruise keeps you moving hands-free.
+                </div>
                 <div className="controls-list">
                   {[
                     ["W / ↑", "Accelerate"],
