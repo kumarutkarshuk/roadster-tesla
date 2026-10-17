@@ -610,8 +610,11 @@ export default function Roadster() {
       )}
       {!ready && (
         <div className="loading">
-          <span className="brand-mark">R↗</span>
-          <p>
+          <span className="brand-mark" aria-hidden="true">
+            roadster
+          </span>
+          {!error && <span className="loading-spinner" aria-hidden="true" />}
+          <p role="status">
             {error
               ? "Your browser couldn’t start the 3D world. Enable WebGL and reload."
               : "Finding your next horizon…"}

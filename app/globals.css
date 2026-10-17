@@ -266,17 +266,32 @@ a {
   position: absolute;
   inset: 0;
   z-index: 40;
-  background: #26333e;
+  background: #16212b;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
   gap: 20px;
+  padding: 24px;
 }
 .loading .brand-mark {
-  font-size: 32px;
-  font-weight: 200;
-  letter-spacing: 4px;
+  font-size: 22px;
+  font-weight: 300;
+  letter-spacing: 8px;
+  padding-left: 8px;
+}
+.loading-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #ffffff20;
+  border-top-color: var(--ink);
+  border-radius: 50%;
+  animation: loading-spin 0.9s linear infinite;
+}
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 .loading p {
   font-size: 12px;
@@ -535,27 +550,6 @@ a {
   gap: 6px;
   margin-left: 15px;
   font-size: 10px;
-}
-.loading {
-  position: absolute;
-  inset: 0;
-  background: #e6ebdf;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 25px;
-}
-.loading p {
-  font-size: 12px;
-  letter-spacing: 1px;
-  max-width: 300px;
-  text-align: center;
-  line-height: 1.8;
-}
-.loading button {
-  text-decoration: underline;
 }
 /* Settings remain out of the way until requested. */
 .panel {
