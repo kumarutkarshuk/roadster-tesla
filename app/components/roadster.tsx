@@ -1,7 +1,13 @@
 "use client";
 
 import { createDrivingAudio } from "./audio";
-import { useEffect, useRef, useState } from "react";
+import { bindInputRelease, createHeldInputs } from "./held-inputs";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import {
   createWorld,
   type Controls,
@@ -143,7 +149,9 @@ const initialControls: Controls = {
 
 export default function Roadster() {
   const mount = useRef<HTMLDivElement>(null);
-  const control = useRef<Controls>({ ...initialControls, keys: new Set() });
+  const [keys] = useState(() => new Set<string>());
+  const control = useRef<Controls>({ ...initialControls, keys });
+  const [heldInputs] = useState(() => createHeldInputs(keys));
   const [settings, setSettings] = useState(initialControls);
   const [telemetry, setTelemetry] = useState<Telemetry>({
     speed: 0,
@@ -169,6 +177,19 @@ export default function Roadster() {
   function update(patch: Partial<Controls>) {
     Object.assign(control.current, patch);
     setSettings({ ...control.current });
+  }
+  function holdButton(event: ReactPointerEvent<HTMLButtonElement>, key: string) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    heldInputs.pressPointer(event.pointerId, key, event.pointerType);
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Global release listeners also cover browsers that cannot capture.
+    }
+  }
+  function releaseButton(event: ReactPointerEvent<HTMLButtonElement>) {
+    heldInputs.releasePointer(event.pointerId);
   }
   function flight() {
     const next = !control.current.flying;
@@ -210,6 +231,9 @@ export default function Roadster() {
         .catch(() => notify("Fullscreen is unavailable in this browser."));
   }
   useEffect(() => {
+    return bindInputRelease(heldInputs, window);
+  }, [heldInputs]);
+  useEffect(() => {
     if (!mount.current) return;
     let dispose: (() => void) | undefined;
     try {
@@ -244,7 +268,6 @@ export default function Roadster() {
     window.addEventListener("pointerdown", unlock);
     window.addEventListener("keydown", unlock);
     const silence = () => {
-      control.current.keys.clear();
       control.current.boost = false;
       audio.current?.update(
         { speed: 0, distance: 0, altitude: 0, charge: 0 },
@@ -263,7 +286,7 @@ export default function Roadster() {
   }, []);
   useEffect(() => {
     if (!panel) return;
-    control.current.keys.clear();
+    heldInputs.clear();
     const trapFocus = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
       const items = document.querySelectorAll<HTMLElement>(
@@ -281,7 +304,7 @@ export default function Roadster() {
     };
     document.addEventListener("keydown", trapFocus);
     return () => document.removeEventListener("keydown", trapFocus);
-  }, [panel]);
+  }, [panel, heldInputs]);
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
       if (
@@ -301,7 +324,7 @@ export default function Roadster() {
         [" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)
       )
         event.preventDefault();
-      control.current.keys.add(key);
+      heldInputs.pressKey(key);
       if (event.repeat) return;
       if (
         [
@@ -331,9 +354,8 @@ export default function Roadster() {
       if (key === "escape") setPanel(null);
     };
     const up = (event: KeyboardEvent) =>
-      control.current.keys.delete(event.key.toLowerCase());
+      heldInputs.releaseKey(event.key.toLowerCase());
     const blur = () => {
-      control.current.keys.clear();
       control.current.boost = false;
     };
     window.addEventListener("keydown", down);
@@ -523,13 +545,10 @@ export default function Roadster() {
           ].map(([key, label]) => (
             <button
               key={key}
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                control.current.keys.add(key);
-              }}
-              onPointerUp={() => control.current.keys.delete(key)}
-              onPointerCancel={() => control.current.keys.delete(key)}
-              onLostPointerCapture={() => control.current.keys.delete(key)}
+              onPointerDown={(event) => holdButton(event, key)}
+              onPointerUp={releaseButton}
+              onPointerCancel={releaseButton}
+              onLostPointerCapture={releaseButton}
             >
               <kbd>{key.toUpperCase()}</kbd>
               {label}
@@ -546,13 +565,10 @@ export default function Roadster() {
             <button
               key={key}
               aria-label={key === "a" ? "Steer left" : "Steer right"}
-              onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                control.current.keys.add(key);
-              }}
-              onPointerUp={() => control.current.keys.delete(key)}
-              onPointerCancel={() => control.current.keys.delete(key)}
-              onLostPointerCapture={() => control.current.keys.delete(key)}
+              onPointerDown={(event) => holdButton(event, key)}
+              onPointerUp={releaseButton}
+              onPointerCancel={releaseButton}
+              onLostPointerCapture={releaseButton}
             >
               {label}
             </button>
@@ -567,13 +583,12 @@ export default function Roadster() {
             <button
               key={key}
               onPointerDown={(e) => {
-                e.currentTarget.setPointerCapture(e.pointerId);
-                control.current.keys.add(key);
-                if (key !== "shift") update({ cruise: false });
+                holdButton(e, key);
+                if (e.button === 0 && key !== "shift") update({ cruise: false });
               }}
-              onPointerUp={() => control.current.keys.delete(key)}
-              onPointerCancel={() => control.current.keys.delete(key)}
-              onLostPointerCapture={() => control.current.keys.delete(key)}
+              onPointerUp={releaseButton}
+              onPointerCancel={releaseButton}
+              onLostPointerCapture={releaseButton}
             >
               {label}
             </button>
