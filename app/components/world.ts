@@ -41,7 +41,6 @@ export type Controls = {
   cruise: boolean;
   paused: boolean;
   boost: boolean;
-  camera: number;
   environment: Environment;
   daytime: Daytime;
   keys: Set<string>;
@@ -947,25 +946,18 @@ export function createWorld(
     shadow.position.set(car.position.x, surfaceY + 0.09, -distance);
     (shadow.material as THREE.MeshBasicMaterial).opacity =
       0.25 / (1 + altitude * 0.15);
-    const side = controls.camera === 1 ? 8 : 0;
     const portrait = camera.aspect < 0.8;
-    const behind =
-      controls.camera === 1
-        ? 7
-        : controls.camera === 2
-          ? -0.8
-          : portrait
-            ? flipTime >= 0
-              ? 14
-              : 12
-            : flipTime >= 0
-              ? 12
-              : 10.5;
-    const height = controls.camera === 2 ? 1.4 : 3.8;
+    const behind = portrait
+      ? flipTime >= 0
+        ? 14
+        : 12
+      : flipTime >= 0
+        ? 12
+        : 10.5;
     const target = new THREE.Vector3(
-      car.position.x + Math.cos(heading) * side - Math.sin(heading) * behind,
-      car.position.y + height,
-      -distance + Math.sin(heading) * side + Math.cos(heading) * behind,
+      car.position.x - Math.sin(heading) * behind,
+      car.position.y + 3.8,
+      -distance + Math.cos(heading) * behind,
     );
     const cameraGround = drivingSurface(-target.z, target.x, environment);
     target.y = Math.max(target.y, cameraGround + 1.5);
@@ -975,7 +967,7 @@ export function createWorld(
     camera.position.y = followY;
     chaseLookAhead = THREE.MathUtils.damp(
       chaseLookAhead,
-      controls.camera === 1 ? 0 : flipTime >= 0 ? 2 : 4,
+      flipTime >= 0 ? 2 : 4,
       8,
       dt,
     );
@@ -985,11 +977,11 @@ export function createWorld(
       8,
       dt,
     );
-    const lookAhead = controls.camera === 2 ? 28 : chaseLookAhead;
+    const lookAhead = chaseLookAhead;
     camera.lookAt(
       car.position.x + Math.sin(heading) * lookAhead,
       Math.max(
-        car.position.y + (controls.camera === 2 ? 1.2 : chaseLookHeight),
+        car.position.y + chaseLookHeight,
         altitude < 0.3
           ? drivingSurface(
               distance + Math.cos(heading) * lookAhead,
@@ -1000,7 +992,6 @@ export function createWorld(
       ),
       -distance - Math.cos(heading) * lookAhead,
     );
-    car.visible = controls.camera !== 2;
     camera.fov = THREE.MathUtils.damp(
       camera.fov,
       portrait ? 57 : speed > 150 || flipTime >= 0 ? 50 : 44,

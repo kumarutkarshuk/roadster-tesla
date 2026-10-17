@@ -60,12 +60,6 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
         <path d="M8 3 4 21M16 3l4 18M12 3v3m0 4v4m0 4v3" />
       </>
     ),
-    camera: (
-      <>
-        <path d="M3 7h4l2-3h6l2 3h4v13H3V7Z" />
-        <circle cx="12" cy="13" r="3.5" />
-      </>
-    ),
     pause: (
       <>
         <path d="M8 5v14M16 5v14" />
@@ -138,7 +132,6 @@ const initialControls: Controls = {
   cruise: true,
   paused: false,
   boost: false,
-  camera: 0,
   environment: "countryside",
   daytime: "day",
   keys: new Set(),
@@ -344,7 +337,6 @@ export default function Roadster() {
       if (key === " ") flight();
       if (key === "x") flip();
       if (key === "b") returnToRoad();
-      if (key === "c") update({ camera: (control.current.camera + 1) % 3 });
       if (key === "p") update({ paused: !control.current.paused });
       if (key === "r") {
         update({ reset: control.current.reset + 1, flying: false });
@@ -483,9 +475,6 @@ export default function Roadster() {
           <span>
             shift <i>boost</i>
           </span>
-          <span>
-            c <i>camera</i>
-          </span>
         </div>
         <nav aria-label="Experience controls">
           <button
@@ -495,13 +484,6 @@ export default function Roadster() {
             onClick={toggleSound}
           >
             <Icon name={sound ? "sound" : "mute"} />
-          </button>
-          <button
-            aria-label="Change camera"
-            title="Camera · C"
-            onClick={() => update({ camera: (settings.camera + 1) % 3 })}
-          >
-            <Icon name="camera" />
           </button>
           <button
             aria-label={settings.paused ? "Resume" : "Pause"}
@@ -705,18 +687,6 @@ export default function Roadster() {
             {panel === "settings" && (
               <>
                 <p>Set the mood. The road will take care of the rest.</p>
-                <label className="setting-label">YOUR PERSPECTIVE</label>
-                <div className="segmented">
-                  {["Chase", "Scenic", "Driver"].map((name, i) => (
-                    <button
-                      key={name}
-                      className={settings.camera === i ? "selected" : ""}
-                      onClick={() => update({ camera: i })}
-                    >
-                      {name}
-                    </button>
-                  ))}
-                </div>
                 <button className="setting-row" onClick={toggleSound}>
                   <span>
                     <Icon name="sound" /> Motor & thruster sound
@@ -754,7 +724,6 @@ export default function Roadster() {
                     ["SHIFT", "Cold-gas boost"],
                     ["X", "Lift off & thruster roll"],
                     ["E / Q", "Climb / descend without a height cap"],
-                    ["C", "Change camera"],
                     ["P", "Pause / resume"],
                     ["B", "Return to the road"],
                     ["R", "Reset journey"],
