@@ -1,5 +1,5 @@
 // Match the visible left-side beam and its posts. The right shoulder stays open.
-export const GUARDRAIL = { center: -4.275, halfWidth: 0.225, height: 0.95 };
+export const GUARDRAIL = { center: -14.4, halfWidth: 0.225, height: 0.95 };
 
 type RailContact = {
   previousX: number;

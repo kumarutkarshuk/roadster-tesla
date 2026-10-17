@@ -1,34 +1,27 @@
-export type TerrainEnvironment = "countryside" | "coast" | "alpine" | "desert";
+// Both drives use a broad six-lane highway with room to recover on the shoulder.
+export type TerrainEnvironment = "coast" | "cyber";
+export const ROAD_HALF_WIDTH = 11.5;
+export const SHOULDER_HALF_WIDTH = 14;
+export const CRUISE_LANE = 5.75;
 
+// Gentle bends keep the ocean and skyline visible ahead of the car.
 export const center = (t: number) =>
-  Math.sin(t / 210) * 48 + Math.sin(t / 470) * 76;
+  Math.sin(t / 420) * 48 + Math.sin(t / 970) * 76;
 export const elevation = (t: number) =>
-  8 + Math.sin(t / 150) * 5 + Math.sin(t / 370) * 7;
-export function ground(
-  t: number,
-  offset: number,
-  environment: TerrainEnvironment,
-) {
-  const edge = Math.max(0, Math.abs(offset) - 12);
-  if (environment === "countryside")
-    return (
-      elevation(t) -
-      0.15 +
-      (1 - Math.exp(-edge / 45)) *
-        (Math.sin(t / 170 + offset / 150) * 5 + Math.sin(offset / 230) * 8) +
-      edge * 0.008
-    );
-  const hills =
-    (Math.sin(t / 85 + offset / 69) * 0.5 + 0.5) *
-    Math.sin(offset / 130 + t / 230) ** 2;
-  if (environment === "coast" && offset < -18)
-    return elevation(t) - Math.min(24, edge * 0.24) + hills * edge * 0.08;
-  return (
-    elevation(t) -
-    0.15 +
-    edge * 0.055 +
-    hills * Math.min(edge * 0.65, environment === "alpine" ? 220 : 120)
-  );
+  12 + Math.sin(t / 340) * 3 + Math.sin(t / 730) * 4;
+
+// The coast drops into open water on the left; the city has level building plots.
+export function ground(t: number, offset: number, environment: TerrainEnvironment) {
+  const edge = Math.max(0, Math.abs(offset) - 18);
+  if (environment === "cyber") return elevation(t) - 0.15;
+  if (offset < -18) return elevation(t) - 0.15 - edge * 0.65;
+  // Several gentle landform scales avoid the repeated wave-shaped hills.
+  const hills = (Math.sin(t / 310 + offset / 210) * 0.5 + 0.5)
+    * (0.4 + 0.6 * Math.sin(offset / 370 - t / 690) ** 2);
+  const foothills = Math.sin(t / 91 + offset / 73) * Math.sin(offset / 137 - t / 153);
+  const rise = (1 - Math.exp(-edge / 110));
+  return elevation(t) - 0.15 + edge * 0.025 + rise * (hills * Math.min(edge * 0.42, 190) + foothills * 4);
+
 }
 
 export const terrainOffsets: number[] = [];
@@ -66,11 +59,11 @@ export function drivingSurface(
     v = (t - t0) / 4;
   const roadCenter = center(t0) * (1 - v) + center(t0 + 4) * v;
   const offset = Math.abs(x - roadCenter);
-  if (offset < 4)
+  if (offset <= SHOULDER_HALF_WIDTH)
     return (
       elevation(t0) * (1 - v) +
       elevation(t0 + 4) * v +
-      (offset < 3.5 ? 0.05 : 0.02)
+      (offset <= ROAD_HALF_WIDTH ? 0.05 : 0.02)
     );
   return terrainSurface(t, x, environment);
 }

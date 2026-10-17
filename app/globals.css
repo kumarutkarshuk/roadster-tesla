@@ -383,13 +383,14 @@ a {
   left: 8px;
   font-size: 8px;
 }
-.alpine .world-art {
-  background: linear-gradient(160deg, #b8cccf, #8d9d8f);
-  color: #e5eee4;
+/* Each scenery card previews the drive's colour and atmosphere. */
+.coast .world-art {
+  background: linear-gradient(155deg, #acd7ed 32%, #488876 33%, #517d42 48%, #237e9c 49%, #82bfc7);
+  color: #e3f3ec;
 }
-.desert .world-art {
-  background: linear-gradient(160deg, #e1c8ad, #b59576);
-  color: #8f735a;
+.cyber .world-art {
+  background: linear-gradient(155deg, #091725 20%, #244157 55%, #115f71 56%, #131c33 75%, #844569);
+  color: #90edf1;
 }
 .world-option strong {
   font-size: 12px;
@@ -943,11 +944,6 @@ a {
   }
 }
 
-.countryside .world-art {
-  background: linear-gradient(160deg, #80b6e9 35%, #a8bb72 36%, #738b4d);
-  color: #455d31;
-}
-
 .world-done {
   display: flex;
   align-items: center;
@@ -960,4 +956,38 @@ a {
   background: #e4e9db;
   color: #263326;
   font-size: 12px;
+}
+
+/* A compact opening guide keeps the first drive one input away. */
+.panel.welcome-guide {
+  width: min(100%, 400px);
+  padding: 26px;
+}
+.welcome-guide h2 {
+  margin: 0 0 10px;
+  font-size: 25px;
+}
+.welcome-guide > p {
+  font-size: 13px;
+  line-height: 1.5;
+}
+.welcome-guide .controls-list {
+  grid-template-columns: 1fr;
+  margin: 24px 0;
+  gap: 16px;
+}
+.welcome-guide .controls-list > div {
+  font-size: 13px;
+  gap: 20px;
+}
+.welcome-guide .controls-list kbd {
+  min-width: 64px;
+  font-size: 11px;
+}
+.welcome-guide .guide-extras {
+  font-size: 11px;
+  margin-bottom: 20px;
+}
+.welcome-guide .world-done {
+  margin-top: 0;
 }

@@ -84,7 +84,8 @@ export function makeSky() {
 
 export function makeOcean() {
   return new THREE.Mesh(
-    new THREE.PlaneGeometry(5000, 5000),
+    // Small surface waves and shallow-water colour make the shoreline readable.
+    new THREE.PlaneGeometry(5000, 5000, 180, 180),
     new THREE.ShaderMaterial({
       uniforms: {
         time: { value: 0 },
@@ -97,17 +98,26 @@ export function makeOcean() {
         fogColor: { value: new THREE.Color("#b69e91") },
       },
       vertexShader:
-        "varying vec3 world;void main(){world=(modelMatrix*vec4(position,1.)).xyz;gl_Position=projectionMatrix*viewMatrix*vec4(world,1.);}",
+        "uniform float time;varying vec3 world;void main(){world=(modelMatrix*vec4(position,1.)).xyz;world.y+=sin(world.x*.045+world.z*.025+time*.65)*.16;gl_Position=projectionMatrix*viewMatrix*vec4(world,1.);}",
       fragmentShader: `varying vec3 world;uniform float time,strength;uniform vec3 color,sunColor,sunDirection,fogColor;
     void main(){
       vec2 p=world.xz;
       float a=sin(p.x*.24+p.y*.1+time*.8)*.11+sin(p.x*.7-p.y*.32+time*1.4)*.035;
-      float b=cos(p.y*.25+p.x*.13+time*.6)*.09;
+      a+=sin(p.x*1.7+p.y*.8+time*1.9)*.023;
+      float b=cos(p.y*.25+p.x*.13+time*.6)*.09+cos(p.y*1.1-p.x*.5+time*1.2)*.025;
       vec3 n=normalize(vec3(a,1.,b));vec3 v=normalize(cameraPosition-world);
       float fresnel=pow(1.-max(dot(n,v),0.),3.);
       float shine=pow(max(dot(reflect(-sunDirection,n),v),0.),95.);
-      vec3 c=mix(color,fogColor,fresnel*.5)+sunColor*shine*strength*2.;
-      float fog=1.-exp(-length(cameraPosition-world)*.0017);c=mix(c,fogColor,fog);
+      float t=-world.z;
+      float roadX=sin(t/420.)*48.+sin(t/970.)*76.;
+      float roadY=12.+sin(t/340.)*3.+sin(t/730.)*4.;
+      float depth=max(0.,(roadX-18.-world.x)*.65-roadY-5.);
+      vec3 shallow=mix(color,vec3(.08,.4,.37),strength*.45);
+      vec3 c=mix(shallow,color,smoothstep(0.,22.,depth));
+      c=mix(c,fogColor,fresnel*.38)+sunColor*shine*strength*2.;
+      float surf=pow(.5+.5*sin(depth*1.8-time*1.3+sin(p.y*.17)),5.);
+      c+=vec3(.63,.74,.7)*surf*(1.-smoothstep(0.,3.8,depth))*.55*strength;
+      float fog=1.-exp(-length(cameraPosition-world)*.00065);c=mix(c,fogColor,fog);
       gl_FragColor=vec4(c,1.);
       #include <tonemapping_fragment>
       #include <colorspace_fragment>

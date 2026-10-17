@@ -1,35 +1,46 @@
 import * as THREE from "three";
 import { makeCar, steerFrontWheels } from "./car";
+import { pedalSpeed, slowDown, steeringRate, chaseDistance } from "./driving";
+import { airTurn, verticalFlight } from "./flight";
 import {
   center,
   elevation,
   ground,
   terrainOffsets,
   drivingSurface,
+  ROAD_HALF_WIDTH,
+  SHOULDER_HALF_WIDTH,
+  CRUISE_LANE,
 } from "./terrain";
+import { buildCity, buildCityHorizon, makeCityWindows } from "./city";
+import { makeCoastalForest, naturalGround } from "./coast";
+import { cityDistricts, sweepScenery, type CityBox } from "./city-layout";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { resolveGuardrail } from "./guardrail";
-import { createExhaust, rollJetDemand, yawJetDemand } from "./exhaust";
+import { createExhaust, rollJetDemand } from "./exhaust";
 import { RoomEnvironment } from "three/addons/environments/RoomEnvironment.js";
 import {
   makeSky,
   makeOcean,
   makeSurfaceTexture,
-  makePineGeometry,
-  makeVegetationTexture,
-  makeStoneTexture,
   makeBroadleafGeometry,
   makeGrassGeometry,
   makeNormalMap,
   makeBranchGeometry,
 } from "./scenery";
 
-export type Environment = "countryside" | "coast" | "alpine" | "desert";
+export type Environment = "coast" | "cyber";
 export type Daytime = "day" | "sunset" | "night";
 export type Telemetry = {
   speed: number;
   distance: number;
   altitude: number;
   charge: number;
+  // Show reverse separately so speed and motor sound stay positive.
+  reversing?: boolean;
   flying?: boolean;
   thrust?: number;
   boosting?: boolean;
@@ -49,31 +60,10 @@ export type Controls = {
   chargeLocked?: boolean;
   flip: number;
 };
+// Ground colours support lush coastal foliage and a darker urban boulevard.
 const palettes = {
-  countryside: {
-    ground: "#7d9553",
-    dark: "#6f884c",
-    water: "#8db9bc",
-    sky: "#83b5e5",
-  },
-  coast: {
-    ground: "#738260",
-    dark: "#47573c",
-    water: "#8db9bc",
-    sky: "#c3d7db",
-  },
-  alpine: {
-    ground: "#879f8d",
-    dark: "#4d6c60",
-    water: "#9bbfc7",
-    sky: "#b9ced7",
-  },
-  desert: {
-    ground: "#d3b18c",
-    dark: "#b68c6a",
-    water: "#c9b999",
-    sky: "#d8d0c6",
-  },
+  coast: { ground: "#c0c4a4", dark: "#849773" },
+  cyber: { ground: "#35414b", dark: "#29343c" },
 };
 const fract = (n: number) => n - Math.floor(n);
 const random = (n: number) => fract(Math.sin(n * 127.1 + 311.7) * 43758.5453);
@@ -110,7 +100,14 @@ function ribbon(
     const d = [center(end) + right, elevation(end) + raise, -end];
     points.push(...a, ...b, ...c, ...b, ...d, ...c);
   }
-  return strip(points, color);
+  const mesh = strip(points, color);
+  // Painted lines stay above asphalt in the depth buffer, even from high flight.
+  if (raise >= 0.06 && raise <= 0.075) {
+    mesh.material.polygonOffset = true;
+    mesh.material.polygonOffsetFactor = -2;
+    mesh.material.polygonOffsetUnits = -2;
+  }
+  return mesh;
 }
 export function createWorld(
   container: HTMLDivElement,
@@ -132,7 +129,7 @@ export function createWorld(
   renderer.shadowMap.type = THREE.PCFShadowMap;
   const grassTexture = makeSurfaceTexture("grass");
   const roadTexture = makeSurfaceTexture("asphalt");
-  const foliageTexture = makeVegetationTexture();
+  const cityWindows = makeCityWindows();
   const meadowTexture = new THREE.TextureLoader().load(
     "/textures/meadow-grass.png",
   );
@@ -147,7 +144,7 @@ export function createWorld(
   broadleafTexture.anisotropy = 8;
   const grassNormal = makeNormalMap(grassTexture, 1.8);
   const roadNormal = makeNormalMap(roadTexture, 1.4);
-  const stoneTexture = makeStoneTexture();
+
   const pmrem = new THREE.PMREMGenerator(renderer);
   const room = new RoomEnvironment();
   const reflections = pmrem.fromScene(room, 0.04);
@@ -159,9 +156,19 @@ export function createWorld(
   const camera = new THREE.PerspectiveCamera(
     52,
     container.clientWidth / container.clientHeight,
-    0.1,
+    0.5,
     2400,
   );
+  // A restrained glow softens lamps and bright reflections in the night drive.
+  const composer = new EffectComposer(renderer);
+  // Multisampling keeps leaf edges and lane markings clean after post-processing.
+  composer.renderTarget1.samples = Math.min(4, renderer.capabilities.maxSamples);
+  composer.renderTarget2.samples = Math.min(4, renderer.capabilities.maxSamples);
+  composer.addPass(new RenderPass(scene, camera));
+  const bloom = new UnrealBloomPass(new THREE.Vector2(container.clientWidth, container.clientHeight), 0.24, 0.45, 1.2);
+  composer.addPass(bloom);
+  const outputPass = new OutputPass();
+  composer.addPass(outputPass);
   const ambient = new THREE.HemisphereLight("#eff3ed", "#6b7766", 2.5);
   scene.add(ambient);
   const sun = new THREE.DirectionalLight("#fff3dc", 3.2);
@@ -176,6 +183,12 @@ export function createWorld(
   sun.shadow.bias = -0.00015;
   scene.add(sun.target);
   scene.add(sun);
+  // Six nearby street lamps light the road without adding lights to every distant block.
+  const streetLights = Array.from({ length: 6 }, () => {
+    const light = new THREE.PointLight("#b5dcff", 110, 30, 2);
+    scene.add(light);
+    return light;
+  });
   const sky = makeSky();
   scene.add(sky);
   const water = makeOcean();
@@ -211,22 +224,59 @@ export function createWorld(
   let boosting = false;
   let chaseLookAhead = 4,
     chaseLookHeight = 0.7;
+  // Smooth turns without letting forward movement stretch the camera gap.
+  let chaseHeading = 0, chaseBehind = 8;
   scene.add(car);
+  // A feathered black contact shadow blends into asphalt without a visible coloured disc.
   const shadow = new THREE.Mesh(
-    new THREE.CircleGeometry(1, 32),
-    new THREE.MeshBasicMaterial({
-      color: "#27382e",
+    new THREE.CircleGeometry(1, 48),
+    new THREE.ShaderMaterial({
       transparent: true,
-      opacity: 0.23,
       depthWrite: false,
+      uniforms: { opacity: { value: 0.24 } },
+      vertexShader: `
+        varying vec2 shadowUv;
+        void main() {
+          shadowUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float opacity;
+        varying vec2 shadowUv;
+        void main() {
+          float radius = length(shadowUv * 2.0 - 1.0);
+          float fade = 1.0 - smoothstep(0.1, 1.0, radius);
+          gl_FragColor = vec4(0.0, 0.0, 0.0, opacity * fade * fade);
+        }
+      `,
     }),
   );
-  shadow.rotation.x = -Math.PI / 2;
+  const shadowNormal = new THREE.Vector3();
+  const shadowAxis = new THREE.Vector3(0, 0, 1);
   shadow.scale.set(1.35, 2.8, 1);
   scene.add(shadow);
   let environment = controls.environment,
     daytime: Daytime | undefined;
   let chunks = new Map<number, THREE.Group>();
+  const districts = new Map<string, THREE.Group>();
+  let districtAddress = "";
+  let cityHorizon: THREE.Group | null = null;
+  // Reuse nearby solid objects for car, roof, and camera contact checks.
+  const nearbySolids = (x: number, t: number, reach = 15): CityBox[] => {
+    const boxes: CityBox[] = [];
+    if (environment === "cyber") {
+      const row = Math.floor(t / 160), column = Math.floor((x - center(t)) / 208);
+      for (let z = row - 1; z <= row + 1; z++)
+        for (let c = column - 1; c <= column + 1; c++)
+          boxes.push(...(districts.get(`${z}:${c}`)?.userData.solids ?? []));
+    } else {
+      const row = Math.floor(t / 160);
+      for (let z = row - 1; z <= row + 1; z++)
+        boxes.push(...(chunks.get(z)?.userData.solids ?? []));
+    }
+    return boxes.filter(b => Math.abs(b.x - x) < b.w / 2 + reach && Math.abs(b.z + t) < b.d / 2 + reach);
+  };
   const exhaustSurfaceHeight = (x: number, z: number) => {
     const height = drivingSurface(-z, x, environment);
     return environment === "coast" ? Math.max(-5, height) : height;
@@ -234,6 +284,8 @@ export function createWorld(
   const disposeGroup = (g: THREE.Object3D) => {
     g.traverse((o) => {
       if (o instanceof THREE.Mesh) {
+        // Release per-instance buffers when scenery leaves the streamed world.
+        if (o instanceof THREE.InstancedMesh) o.dispose();
         if (o.userData.ownedTexture instanceof THREE.Texture)
           o.userData.ownedTexture.dispose();
         o.geometry.dispose();
@@ -246,6 +298,8 @@ export function createWorld(
   };
   function buildChunk(index: number) {
     const group = new THREE.Group();
+    const solids: CityBox[] = [];
+    group.userData.solids = solids;
     const start = index * 160;
     const p = palettes[environment];
     const positions: number[] = [],
@@ -253,12 +307,7 @@ export function createWorld(
       uvs: number[] = [],
       indices: number[] = [];
     const offsets = terrainOffsets;
-    const base = new THREE.Color(
-        environment === "countryside" ? "#d3d0b5" : p.ground,
-      ),
-      dark = new THREE.Color(
-        environment === "countryside" ? "#a9b494" : p.dark,
-      );
+    const base = new THREE.Color(p.ground), dark = new THREE.Color(p.dark);
     const width = offsets.length;
     for (let row = 0; row <= 20; row++) {
       const t = start + row * 8;
@@ -272,11 +321,6 @@ export function createWorld(
             Math.sin(x * 0.031 + t * 0.014) *
             Math.sin(t * 0.037 - x * 0.013);
         const color = base.clone().lerp(dark, blend);
-        if (environment === "alpine" && height > 75)
-          color.lerp(
-            new THREE.Color("#e8e8e3"),
-            Math.min(1, (height - 75) / 50),
-          );
         colors.push(color.r, color.g, color.b);
         if (row < 20 && col < width - 1) {
           const a = row * width + col;
@@ -297,155 +341,90 @@ export function createWorld(
       geo,
       new THREE.MeshStandardMaterial({
         vertexColors: true,
-        map: environment === "countryside" ? meadowTexture : grassTexture,
+        map: environment === "coast" ? meadowTexture : roadTexture,
         normalMap: grassNormal,
         normalScale: new THREE.Vector2(0.4, 0.4),
         roughness: 1,
       }),
     );
+    if (environment === "coast") naturalGround(terrain.material);
     terrain.receiveShadow = true;
     group.add(terrain);
-    group.add(ribbon(start, 160, -4, 4, "#a7aaa0", 0.02));
-    const road = ribbon(
-      start,
-      160,
-      -3.5,
-      3.5,
-      environment === "countryside" ? "#7a7b72" : "#626160",
-      0.05,
-    );
+    // Six full lanes, broad shoulders and matching markings make both roads feel open.
+    // Shoulder strips stop at the asphalt edge, avoiding overlapping road layers from above.
+    for (const side of [-1, 1])
+      group.add(ribbon(start, 160, side < 0 ? -SHOULDER_HALF_WIDTH : ROAD_HALF_WIDTH,
+        side < 0 ? -ROAD_HALF_WIDTH : SHOULDER_HALF_WIDTH, "#7f8786", 0.02));
+    const road = ribbon(start, 160, -ROAD_HALF_WIDTH, ROAD_HALF_WIDTH,
+      environment === "cyber" ? "#283542" : "#65696a", 0.05);
     const roadUvs: number[] = [];
     const roadVertices = road.geometry.attributes.position;
     for (let i = 0; i < roadVertices.count; i++)
       roadUvs.push(roadVertices.getX(i) / 8, roadVertices.getZ(i) / 8);
-    road.geometry.setAttribute(
-      "uv",
-      new THREE.Float32BufferAttribute(roadUvs, 2),
-    );
+    road.geometry.setAttribute("uv", new THREE.Float32BufferAttribute(roadUvs, 2));
     road.material.map = roadTexture;
     road.material.normalMap = roadNormal;
-    road.material.normalScale.set(0.25, 0.25);
+    road.material.normalScale.set(0.18, 0.18);
+    // Matte asphalt keeps the road readable when driving towards reflected light.
+    road.material.roughness = environment === "cyber" ? 0.92 : 0.86;
+    road.material.metalness = 0;
     road.receiveShadow = true;
     group.add(road);
-    group.add(ribbon(start, 160, -3.25, -3.14, "#e2e3cf", 0.065));
-    group.add(ribbon(start, 160, 3.14, 3.25, "#e2e3cf", 0.065));
+    for (const edge of [-11.1, 11.1])
+      group.add(ribbon(start, 160, edge - 0.08, edge + 0.08, "#eeeee0", 0.065));
+    for (const edge of [-0.18, 0.18])
+      group.add(ribbon(start, 160, edge - 0.055, edge + 0.055, "#dfc78b", 0.07));
     for (let t = start; t < start + 160; t += 16)
-      group.add(ribbon(t, 7, -0.08, 0.08, "#e7e3c8", 0.075));
-    if (environment === "countryside") {
-      const vertices: number[] = [],
-        wallUvs: number[] = [];
-      for (let t = start; t < start + 160; t += 4)
-        for (const edge of [-4.5, -4.05]) {
-          const a = [center(t) + edge, elevation(t) - 0.15, -t],
-            b = [center(t + 4) + edge, elevation(t + 4) - 0.15, -t - 4];
-          const c = [a[0], a[1] + 1.05, a[2]],
-            d = [b[0], b[1] + 1.05, b[2]];
-          vertices.push(...a, ...b, ...c, ...b, ...d, ...c);
-          wallUvs.push(
-            t / 2.5,
-            0,
-            (t + 4) / 2.5,
-            0,
-            t / 2.5,
-            1,
-            (t + 4) / 2.5,
-            0,
-            (t + 4) / 2.5,
-            1,
-            t / 2.5,
-            1,
-          );
-        }
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        "position",
-        new THREE.Float32BufferAttribute(vertices, 3),
-      );
-      geometry.setAttribute("uv", new THREE.Float32BufferAttribute(wallUvs, 2));
-      geometry.computeVertexNormals();
-      const wall = new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({
-          map: stoneTexture,
-          roughness: 1,
-          side: THREE.DoubleSide,
-        }),
-      );
-      wall.castShadow = wall.receiveShadow = true;
-      group.add(wall);
-      group.add(ribbon(start, 160, -4.5, -4.05, "#817f67", 0.9));
-    } else {
-      // Roadside markers and a continuous coastal guardrail.
-      for (let t = start; t < start + 160; t += 16) {
-        const post = new THREE.Mesh(
-          new THREE.BoxGeometry(0.14, 0.9, 0.14),
-          new THREE.MeshStandardMaterial({ color: "#d9dfd5" }),
-        );
-        post.position.set(center(t) - 4.3, elevation(t) + 0.45, -t);
-        group.add(post);
-      }
-      group.add(ribbon(start, 160, -4.4, -4.15, "#b6c0ba", 0.82));
+      for (const lane of [-7.6, -3.8, 3.8, 7.6])
+        group.add(ribbon(t, 6, lane - 0.065, lane + 0.065, "#e5e7e2", 0.075));
+    // Keep the visible safety rail aligned with the driving collision boundary.
+    for (let t = start; t < start + 160; t += 8) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.9, 0.14),
+        new THREE.MeshStandardMaterial({ color: "#a8b5b8", metalness: 0.7, roughness: 0.35 }));
+      post.position.set(center(t) - 14.4, elevation(t) + 0.45, -t);
+      group.add(post);
     }
-    const trees =
-      environment === "desert" ? 18 : environment === "countryside" ? 75 : 95;
-    const trunkGeometry = new THREE.CylinderGeometry(0.15, 0.24, 2.7, 9);
-    const treeGeometry =
-      environment === "desert"
-        ? new THREE.CylinderGeometry(0.45, 0.6, 5, 7)
-        : environment === "countryside"
-          ? makeBroadleafGeometry()
-          : makePineGeometry();
-    const trunks = new THREE.InstancedMesh(
-      trunkGeometry,
-      new THREE.MeshStandardMaterial({ color: "#786f5c" }),
-      trees,
-    );
-    const crowns = new THREE.InstancedMesh(
-      treeGeometry,
-      new THREE.MeshStandardMaterial({
-        color:
-          environment === "desert"
-            ? "#727b57"
-            : environment === "countryside"
-              ? "#f1f1d9"
-              : "#b8c7a4",
-        map:
-          environment === "desert"
-            ? null
-            : environment === "countryside"
-              ? broadleafTexture
-              : foliageTexture,
-        alphaTest: 0.35,
-        alphaToCoverage: true,
-        vertexColors: environment === "countryside",
-        side: THREE.DoubleSide,
-        roughness: 0.95,
-      }),
-      trees,
-    );
-    const branches =
-      environment === "countryside"
-        ? new THREE.InstancedMesh(
-            makeBranchGeometry(),
-            new THREE.MeshStandardMaterial({
-              color: "#706e5a",
-              roughness: 0.95,
-            }),
-            trees,
-          )
-        : null;
+    group.add(ribbon(start, 160, -14.625, -14.175, "#b6c0ba", 0.82));
+    if (environment === "cyber") {
+
+      // Raised pavements and thin luminous edges frame the city highway.
+      for (const side of [-1, 1]) {
+        group.add(ribbon(start, 160, side < 0 ? -23 : 14.8, side < 0 ? -14.8 : 23, "#49545d", 0.18));
+        const light = ribbon(start, 160, side * 14.8 - 0.045, side * 14.8 + 0.045, "#66d6eb", 0.2);
+        light.material.emissive.set("#38b9d5");
+        light.material.emissiveIntensity = 2;
+        group.add(light);
+      }
+      scene.add(group);
+      chunks.set(index, group);
+      return;
+    }
+    // Layered leaf clusters, visible branches and dense verge grass soften the coast.
+    group.add(makeCoastalForest(index, solids));
+    const trees = 165;
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.24, 2.7, 9),
+      new THREE.MeshStandardMaterial({ color: "#786f5c" }), trees);
+    const crowns = new THREE.InstancedMesh(makeBroadleafGeometry(),
+      new THREE.MeshStandardMaterial({ color: "#b0bd91", map: broadleafTexture,
+        alphaTest: 0.5, vertexColors: true,
+        side: THREE.DoubleSide, roughness: 0.95 }), trees);
+    const branches = new THREE.InstancedMesh(makeBranchGeometry(),
+      new THREE.MeshStandardMaterial({ color: "#706e5a", roughness: 0.95 }), trees);
+    trunks.geometry.computeBoundingBox();
+    const treeBounds = new THREE.Box3(), treeSize = new THREE.Vector3(), treeCenter = new THREE.Vector3();
+    // Only solid trunks block driving; leaf clusters must not seal off clear ground.
+    const addTreeSolid = (geometry: THREE.BufferGeometry, matrix: THREE.Matrix4) => {
+      treeBounds.copy(geometry.boundingBox!).applyMatrix4(matrix);
+      treeBounds.getSize(treeSize);
+      treeBounds.getCenter(treeCenter);
+      solids.push({ x: treeCenter.x, y: treeCenter.y, z: treeCenter.z, w: treeSize.x, h: treeSize.y, d: treeSize.z });
+    };
     const dummy = new THREE.Object3D();
     for (let i = 0; i < trees; i++) {
       const seed = index * 111 + i * 7,
         t = start + random(seed) * 160;
-      let offset = 16 + random(seed + 1) * 200;
-      if (environment !== "coast" && i % 3 === 0) offset *= -1;
-      if (environment === "countryside")
-        offset =
-          i < 12
-            ? -(15 + random(seed + 1) * 13)
-            : (85 + random(seed + 1) * 300) * (i % 3 === 0 ? 1 : -1);
-      const scale = 0.55 + random(seed + 2) * 1.2;
+      const offset = i < 55 ? 23 + random(seed + 1) * 45 : 60 + random(seed + 1) * 125;
+      const scale = 0.65 + random(seed + 2) * 1.35;
       dummy.position.set(
         center(t) + offset,
         drivingSurface(t, center(t) + offset, environment) + 1.2 * scale,
@@ -459,42 +438,42 @@ export function createWorld(
       dummy.rotation.y = random(seed + 3) * 6;
       dummy.updateMatrix();
       trunks.setMatrixAt(i, dummy.matrix);
+      addTreeSolid(trunks.geometry, dummy.matrix);
       dummy.position.y += 3.2 * scale;
       dummy.updateMatrix();
       crowns.setMatrixAt(i, dummy.matrix);
-      branches?.setMatrixAt(i, dummy.matrix);
+      crowns.setColorAt(i, new THREE.Color().setHSL(0.23 + random(seed + 12) * 0.06, 0.18 + random(seed + 13) * 0.16, 0.65 + random(seed + 14) * 0.2));
+      branches.setMatrixAt(i, dummy.matrix);
     }
     trunks.castShadow = true;
     crowns.castShadow = true;
     crowns.receiveShadow = true;
     group.add(trunks, crowns);
-    if (branches) {
-      branches.castShadow = true;
-      branches.receiveShadow = true;
-      group.add(branches);
-    }
-    if (environment !== "desert") {
+    branches.castShadow = true;
+    branches.receiveShadow = true;
+    group.add(branches);
+    {
       const grass = new THREE.InstancedMesh(
         makeGrassGeometry(),
         new THREE.MeshStandardMaterial({
           vertexColors: true,
-          color: "#6d873d",
+          color: "#b6bd91",
           side: THREE.DoubleSide,
           roughness: 1,
         }),
-        6000,
+        9000,
       );
       const transform = new THREE.Object3D();
-      for (let i = 0; i < 6000; i++) {
+      for (let i = 0; i < 9000; i++) {
         const seed = index * 7301 + i * 19,
           t = start + random(seed) * 160;
-        const offset = (4.3 + random(seed + 3) * 50) * (i % 3 === 0 ? -1 : 1);
+        const offset = i % 4 === 0 ? -(14.9 + random(seed + 3) * 3) : 14.9 + random(seed + 3) ** 1.8 * 48;
         transform.position.set(
           center(t) + offset,
           ground(t, offset, environment),
           -t,
         );
-        transform.scale.setScalar(0.45 + random(seed + 5) * 0.8);
+        transform.scale.setScalar(0.8 + random(seed + 5) * 1.1);
         transform.rotation.y = random(seed + 7) * 6.28;
         transform.updateMatrix();
         grass.setMatrixAt(i, transform.matrix);
@@ -503,14 +482,18 @@ export function createWorld(
       grass.name = "Near grass";
       group.add(grass);
     }
-    for (let i = 0; i < (environment === "countryside" ? 0 : 9); i++) {
+    for (let i = 0; i < 14; i++) {
       const t = start + random(index * 39 + i * 8) * 160,
-        offset = 12 + random(index * 71 + i * 4) * 75;
+        offset = 20 + random(index * 71 + i * 4) * 75;
       const rock = new THREE.Mesh(
         new THREE.DodecahedronGeometry(1, 1),
         new THREE.MeshStandardMaterial({
-          color: environment === "desert" ? "#b5967c" : "#7c8174",
-          flatShading: true,
+          color: "#aaa99a",
+          // Fine mineral grain keeps boulders natural instead of looking like masonry.
+          map: grassTexture,
+          bumpMap: grassTexture,
+          bumpScale: 0.18,
+          roughness: 0.95,
         }),
       );
       rock.position.set(center(t) + offset, ground(t, offset, environment), -t);
@@ -524,10 +507,11 @@ export function createWorld(
   }
   let distance = 80,
     speed = 0,
-    lane = 1.8,
-    carX = center(80) + 1.8,
+    lane = CRUISE_LANE,
+    carX = center(80) + CRUISE_LANE,
     heading = Math.atan2(center(82) - center(78), 4),
     airYawRate = 0,
+    airBank = 0,
     yawThrust = 0,
     wheelSteering = 0,
     traveled = 0,
@@ -554,6 +538,7 @@ export function createWorld(
     camera.aspect = container.clientWidth / container.clientHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(container.clientWidth, container.clientHeight);
+    composer.setSize(container.clientWidth, container.clientHeight);
   };
   const observer = new ResizeObserver(resize);
   observer.observe(container);
@@ -567,13 +552,13 @@ export function createWorld(
       hasCarPosition = false;
       distance = 80;
       speed = 0;
-      lane = 1.8;
-      carX = center(80) + 1.8;
+      lane = CRUISE_LANE;
+      carX = center(80) + CRUISE_LANE;
       heading = Math.atan2(center(82) - center(78), 4);
       traveled = 0;
       surfaceY = elevation(80);
       groundLift = 0;
-      airYawRate = yawThrust = 0;
+      airYawRate = yawThrust = airBank = 0;
       wheelSteering = 0;
       steerFrontWheels(frontWheels, 0);
       flipTime = -1;
@@ -590,12 +575,12 @@ export function createWorld(
     }
     if (controls.recover !== recover) {
       recover = controls.recover;
-      lane = 1.8;
+      lane = CRUISE_LANE;
       carX = center(distance) + lane;
       heading = Math.atan2(center(distance + 2) - center(distance - 2), 4);
       surfaceY = elevation(distance);
       groundLift = 0;
-      airYawRate = yawThrust = 0;
+      airYawRate = yawThrust = airBank = 0;
       wheelSteering = 0;
       steerFrontWheels(frontWheels, 0);
       speed = Math.min(speed, 40);
@@ -617,20 +602,28 @@ export function createWorld(
       environment = controls.environment;
       chunks.forEach(disposeGroup);
       chunks = new Map();
+      districts.forEach(disposeGroup);
+      districts.clear();
+      if (cityHorizon) disposeGroup(cityHorizon);
+      cityHorizon = null;
+      districtAddress = "";
+      daytime = undefined;
     }
-    const weatherChanged = daytime !== controls.daytime;
+    // Enforce night in the renderer as well as in the scenery menu.
+    const sceneTime = environment === "cyber" ? "night" : controls.daytime;
+    const weatherChanged = daytime !== sceneTime;
     if (weatherChanged) {
-      daytime = controls.daytime;
+      daytime = sceneTime;
     }
     const night = daytime === "night",
       sunset = daytime === "sunset";
     const skyMat = sky.material;
     const waterMat = water.material;
     skyMat.uniforms.top.value.set(
-      night ? "#18263e" : sunset ? "#647b9b" : "#3782d7",
+      night ? (environment === "cyber" ? "#040a17" : "#18263e") : sunset ? "#647b9b" : "#3782d7",
     );
     skyMat.uniforms.horizon.value.set(
-      night ? "#4c5367" : sunset ? "#f1b583" : "#b1d0ee",
+      night ? (environment === "cyber" ? "#243b51" : "#4c5367") : sunset ? "#f1b583" : "#b1d0ee",
     );
     skyMat.uniforms.glow.value.set(sunset ? "#ffb86f" : "#f9e6c8");
     skyMat.uniforms.cloud.value.set(
@@ -655,28 +648,38 @@ export function createWorld(
     );
     if (weatherChanged)
       scene.fog = new THREE.FogExp2(
-        night ? "#354154" : sunset ? "#b5a2a0" : "#b0c4cb",
-        0.0015,
+        night ? (environment === "cyber" ? "#122534" : "#354154") : sunset ? "#b5a2a0" : "#b0c4cb",
+        environment === "cyber" ? 0.0024 : 0.0012,
       );
-    ambient.intensity = night ? 0.55 : sunset ? 1.1 : 0.95;
+    // Ease aerial haze so nearby rooftops remain visible from high flight.
+    if (environment === "cyber" && scene.fog instanceof THREE.FogExp2)
+      scene.fog.density = 0.0024 / Math.sqrt(1 + altitude / 220);
+    // Night streets need faint reflections, without bright studio panels washing out the car.
+    scene.environmentIntensity = environment === "cyber" ? 0.045 : 0.35;
+    ambient.intensity = night ? 0.78 : sunset ? 1.1 : 0.95;
     ambient.color.set(sunset ? "#a1b5db" : "#d8e7f3");
     ambient.groundColor.set(sunset ? "#66594a" : "#6a755a");
-    sun.intensity = night ? 0.2 : sunset ? 3 : 2.5;
+    // At night, broad sky fill stays shadow-free; its small shadow map caused hard road patches.
+    sun.castShadow = !night;
+    sun.intensity = night ? 0.3 : sunset ? 3 : 2.5;
     sun.color.set(sunset ? "#ffc18a" : "#fff1dc");
+    // Pools of light follow the actual boulevard lamp spacing in both driving directions.
+    streetLights.forEach((light, i) => {
+      const t = Math.floor((distance - 12) / 32) * 32 + 12 + (Math.floor(i / 2) - 1) * 32;
+      light.position.set(center(t) + (i % 2 ? 13.3 : -13.3), elevation(t) + 10.7, -t);
+      light.visible = night && environment === "cyber";
+    });
     if (!controls.paused) {
+      const previousBaseY = surfaceY + altitude + groundLift + 0.015;
       let previousX = carX;
       let previousDistance = distance;
       const k = controls.keys;
-      boosting = (k.has("shift") || controls.boost) && charge > 1;
       const accelerating = k.has("w") || k.has("arrowup");
-      const braking = k.has("s") || k.has("arrowdown");
-      if (braking) speed = Math.max(0, speed - dt * 65);
-      else if (boosting) speed = Math.min(265, speed + dt * 70);
-      else if (accelerating) speed = Math.min(180, speed + dt * 32);
-      else if (controls.cruise)
-        speed +=
-          Math.sign(72 - speed) * Math.min(Math.abs(72 - speed), dt * 18);
-      else speed = Math.max(0, speed - dt * 5);
+      const reversing = k.has("s") || k.has("arrowdown");
+      // Reverse overrides boost and cruise; W first brakes any backward movement.
+      boosting = !reversing && speed >= 0 && (k.has("shift") || controls.boost) && charge > 1;
+      if (accelerating || reversing) controls.cruise = false;
+      speed = pedalSpeed(speed, dt, accelerating, reversing, boosting, controls.cruise);
       // Free-flight lift is unlimited by design; boost and rolls share a rechargeable reserve.
       // Gravity and bounded acceleration remain active. These are gameplay values.
       controls.chargeLocked = charge < 35;
@@ -690,42 +693,31 @@ export function createWorld(
         4,
       );
       const previousSteeringHeading = heading;
-      if (controls.cruise && !steering) {
-        const previousHeading = heading;
-        const previousRate = airYawRate;
+      const inAir = controls.flying || altitude > 0.3;
+      if (steering) controls.cruise = false;
+      if (inAir) {
+        // Manual and cruise turns share the same nozzle torque and air resistance.
+        const headingError = Math.atan2(Math.sin(roadHeading - heading), Math.cos(roadHeading - heading));
+        const targetRate = controls.cruise && !steering
+          ? THREE.MathUtils.clamp(headingError * 1.4, -0.5, 0.5)
+          : (-steering * 0.7) / (1 + Math.abs(speed) / 220);
+        const turn = airTurn(airYawRate, yawThrust, targetRate, dt);
+        airYawRate = turn.rate;
+        yawThrust = turn.jet;
+        heading += airYawRate * dt;
+      } else if (controls.cruise && !steering) {
         heading = THREE.MathUtils.damp(heading, roadHeading, 2.5, dt);
-        carX = THREE.MathUtils.damp(carX, center(distance) + 1.8, 1.7, dt);
-        airYawRate = dt > 0 ? (heading - previousHeading) / dt : 0;
-        yawThrust = controls.flying
-          ? yawJetDemand(airYawRate, previousRate, dt)
-          : 0;
+        carX = THREE.MathUtils.damp(carX, center(distance) + CRUISE_LANE, 1.7, dt);
+        airYawRate = yawThrust = 0;
       } else {
-        if (steering) controls.cruise = false;
-        if (controls.flying || altitude > 0.3) {
-          const previousRate = airYawRate;
-          const targetRate = (-steering * 0.8) / (1 + speed / 180);
-          airYawRate = THREE.MathUtils.damp(
-            airYawRate,
-            targetRate,
-            steering ? 3 : 6,
-            dt,
-          );
-          if (!steering && Math.abs(airYawRate) < 0.02) airYawRate = 0;
-          heading += airYawRate * dt;
-          // Command torque from angular acceleration plus yaw damping. The
-          // opposite pair naturally fires when the steering key is released.
-          yawThrust = yawJetDemand(airYawRate, previousRate, dt);
-        } else {
-          airYawRate = yawThrust = 0;
-          heading -=
-            (steering * dt * 1.2 * Math.min(1, speed / 15)) / (1 + speed / 100);
-        }
+        airYawRate = yawThrust = 0;
+        heading += steeringRate(speed, steering) * dt;
       }
       const steeringTarget =
         controls.flying || altitude > 0.3
           ? 0
           : steering
-            ? (steering * 0.5) / (1 + speed / 100)
+            ? (steering * 0.5) / (1 + Math.abs(speed) / 100)
             : controls.cruise && dt > 0
               ? THREE.MathUtils.clamp(
                   Math.atan(
@@ -743,13 +735,15 @@ export function createWorld(
         dt,
       );
       steerFrontWheels(frontWheels, wheelSteering);
-      const offroad = Math.abs(lane) > 3.5;
+      const offroad = Math.abs(lane) > ROAD_HALF_WIDTH;
+      // Rough ground slows both forward and reverse movement without changing gear.
       if (offroad && altitude < 0.3)
-        speed = Math.max(0, speed - dt * (3 + speed * 0.09));
+        speed = slowDown(speed, dt * (3 + Math.abs(speed) * 0.09));
       const advance = (speed / 3.6) * dt;
       distance += Math.cos(heading) * advance;
       carX += Math.sin(heading) * advance;
-      traveled += advance;
+      // The trip counts distance covered even while backing up.
+      traveled += Math.abs(advance);
       lane = carX - center(distance);
       const previousGround = surfaceY;
       surfaceY = drivingSurface(distance, carX, environment);
@@ -761,9 +755,9 @@ export function createWorld(
       // The ocean and the outer generated boundary return the car to solid ground.
       if (
         (environment === "coast" && surfaceY < -4 && altitude < 0.2) ||
-        Math.abs(lane) > 1200
+        (environment === "coast" && Math.abs(lane) > 1200)
       ) {
-        lane = 1.8;
+        lane = CRUISE_LANE;
         carX = center(distance) + lane;
         surfaceY = elevation(distance);
         heading = roadHeading;
@@ -804,28 +798,25 @@ export function createWorld(
         previousVerticalInput = verticalInput;
       }
       wasFlying = controls.flying;
-      const targetAltitude = controls.flying ? flightTarget : 0;
-      if (altitude < 0) {
-        altitude = 0;
-        verticalSpeed = 0;
+      // Landing assist measures clearance above roofs too, so supported cars stop their lift jets.
+      let landingSurface = surfaceY;
+      for (const box of nearbySolids(carX, distance)) {
+        const top = box.y + box.h / 2;
+        if (Math.abs(carX - box.x) < box.w / 2 + 1 && Math.abs(-distance - box.z) < box.d / 2 + 1.8
+          && top <= surfaceY + altitude + 0.3)
+          landingSurface = Math.max(landingSurface, top);
       }
-      const airborne = altitude > 0.01 || controls.flying;
-      thrust = airborne
-        ? THREE.MathUtils.clamp(
-            9.81 + (targetAltitude - altitude) * 3.2 - verticalSpeed * 3.1,
-            0,
-            18,
-          )
-        : 0;
-      if (airborne) {
-        verticalSpeed += (thrust - 9.81) * dt;
-        altitude += verticalSpeed * dt;
-
-        if (altitude < 0.025 && verticalSpeed < 0) {
-          altitude = 0;
-          verticalSpeed = 0;
-          thrust = 0;
-        }
+      const supportHeight = landingSurface - surfaceY;
+      const clearance = Math.max(0, altitude - supportHeight);
+      if (controls.flying || clearance > 0.01) {
+        const vertical = verticalFlight(clearance, verticalSpeed,
+          Math.max(0, flightTarget - supportHeight), controls.flying, dt);
+        altitude = supportHeight + vertical.height;
+        verticalSpeed = vertical.velocity;
+        thrust = vertical.thrust;
+      } else {
+        altitude = supportHeight;
+        verticalSpeed = thrust = 0;
       }
       const contact = resolveGuardrail(
         {
@@ -836,7 +827,7 @@ export function createWorld(
           heading,
           baseY: surfaceY + altitude + groundLift + 0.07,
           pitch: car.rotation.x,
-          roll: altitude > 0.3 ? flipRoll + steering * 0.14 : car.rotation.z,
+          roll: car.rotation.z,
           speed,
         },
         center,
@@ -854,6 +845,29 @@ export function createWorld(
           flightTarget = Math.max(0, flightTarget + change);
         }
         surfaceY = correctedGround;
+      }
+      // Solid walls and trees stop the hull; descending onto roofs is a safe landing.
+      const sceneryContact = sweepScenery(
+        { x: previousX, y: previousBaseY, z: -previousDistance },
+        { x: carX, y: surfaceY + altitude + groundLift + 0.015, z: -distance },
+        nearbySolids(carX, distance),
+        2.85,
+        flipTime >= 0 ? 3 : 1.8,
+        { heading, halfWidth: 1.3 + Math.abs(Math.sin(car.rotation.z)) * 0.85, halfLength: 2.5 },
+      );
+      if (sceneryContact.hit) {
+        carX = sceneryContact.x;
+        distance = -sceneryContact.z;
+        lane = carX - center(distance);
+        surfaceY = drivingSurface(distance, carX, environment);
+        altitude = Math.max(0, sceneryContact.y - surfaceY - groundLift - 0.015);
+        if (sceneryContact.axis === "y") {
+          verticalSpeed = 0;
+          if (sceneryContact.landed && !controls.flying) thrust = 0;
+        } else {
+          speed *= 0.25;
+          controls.cruise = false;
+        }
       }
       const sampleGround = (t: number, x: number) =>
         drivingSurface(t, x, environment);
@@ -883,10 +897,11 @@ export function createWorld(
         (rightGround - leftGround) * Math.cos(car.rotation.x),
         2,
       );
-      car.rotation.z =
-        altitude > 0.3
-          ? steering * 0.14 + flipRoll
-          : THREE.MathUtils.damp(car.rotation.z, slopeRoll, 10, dt);
+      // Bank follows the actual turn rate, so changing keys never snaps the body sideways.
+      airBank = THREE.MathUtils.damp(airBank, -airYawRate * 0.2, 4, dt);
+      car.rotation.z = altitude > 0.3
+        ? airBank + flipRoll
+        : THREE.MathUtils.damp(car.rotation.z, slopeRoll, 10, dt);
       car.rotation.y = -heading;
       if (altitude <= 0.3) {
         let neededLift = 0;
@@ -919,16 +934,41 @@ export function createWorld(
       } else groundLift = THREE.MathUtils.damp(groundLift, 0, 8, dt);
     }
     const chunk = Math.floor(distance / 160);
-    for (let i = chunk - 1; i <= chunk + 7; i++)
+    // Keep terrain behind the car too, so turning in flight never reveals an empty strip.
+    const behindChunks = environment === "cyber" ? 7 : 3;
+    const aheadChunks = environment === "cyber" ? 7 : 11;
+    for (let i = chunk - behindChunks; i <= chunk + aheadChunks; i++)
       if (!chunks.has(i)) buildChunk(i);
     chunks.forEach((g, i) => {
       const grass = g.getObjectByName("Near grass");
-      if (grass) grass.visible = i <= chunk + 2;
-      if (i < chunk - 1 || i > chunk + 7) {
+      if (grass) grass.visible = Math.abs(i - chunk) <= 2;
+      if (i < chunk - behindChunks || i > chunk + aheadChunks) {
         disposeGroup(g);
         chunks.delete(i);
       }
     });
+    // An entire neighbourhood follows flight in both axes, beyond the old three rows.
+    if (environment === "cyber") {
+      const column = Math.floor(lane / 208);
+      const address = `${chunk}:${column}`;
+      if (districtAddress !== address) {
+        const wanted = cityDistricts(distance, lane);
+        const keys = new Set(wanted.map(d => d.key));
+        districts.forEach((group, key) => {
+          if (!keys.has(key)) { disposeGroup(group); districts.delete(key); }
+        });
+        for (const district of wanted) {
+          if (districts.has(district.key)) continue;
+          const group = buildCity(district.row, district.column, cityWindows);
+          districts.set(district.key, group);
+          scene.add(group);
+        }
+        if (cityHorizon) disposeGroup(cityHorizon);
+        cityHorizon = buildCityHorizon(chunk, column, cityWindows);
+        scene.add(cityHorizon);
+        districtAddress = address;
+      }
+    }
     car.position.set(
       carX,
       surfaceY + Math.max(0, altitude) + groundLift + 0.015,
@@ -943,28 +983,42 @@ export function createWorld(
     );
     if (!controls.paused)
       for (const wheel of wheels) wheel.rotation.x += (speed / 3.6 / 0.39) * dt;
-    shadow.position.set(car.position.x, surfaceY + 0.09, -distance);
-    (shadow.material as THREE.MeshBasicMaterial).opacity =
-      0.25 / (1 + altitude * 0.15);
+    // Follow the road slope and car direction so the soft shadow does not cut into the surface.
+    shadow.position.set(car.position.x, surfaceY + 0.06, -distance);
+    shadowNormal.set(
+      drivingSurface(distance, carX - 0.5, environment) - drivingSurface(distance, carX + 0.5, environment),
+      1,
+      drivingSurface(distance + 0.5, carX, environment) - drivingSurface(distance - 0.5, carX, environment),
+    ).normalize();
+    shadow.quaternion.setFromUnitVectors(shadowAxis, shadowNormal);
+    shadow.rotateZ(heading);
+    shadow.material.uniforms.opacity.value = 0.24 / (1 + altitude * 0.15);
+    // Anchor the camera to the car every frame; only turns and the small speed offset ease.
     const portrait = camera.aspect < 0.8;
-    const behind = portrait
-      ? flipTime >= 0
-        ? 14
-        : 12
-      : flipTime >= 0
-        ? 12
-        : 10.5;
+    const desiredBehind = chaseDistance(speed, portrait);
+    if (!hasCarPosition) {
+      chaseHeading = heading;
+      chaseBehind = desiredBehind;
+    }
+    chaseHeading += Math.atan2(Math.sin(heading - chaseHeading), Math.cos(heading - chaseHeading)) * (1 - Math.exp(-dt * 10));
+    chaseBehind = THREE.MathUtils.damp(chaseBehind, desiredBehind, 5, dt);
+    const behind = chaseBehind;
     const target = new THREE.Vector3(
-      car.position.x - Math.sin(heading) * behind,
-      car.position.y + 3.8,
-      -distance + Math.cos(heading) * behind,
+      car.position.x - Math.sin(chaseHeading) * behind,
+      car.position.y + 3.2 + (behind - (portrait ? 9.5 : 8)) * 0.15,
+      -distance + Math.cos(chaseHeading) * behind,
     );
+    // Pull the chase camera in before it passes through a building or tree.
+    const cameraContact = sweepScenery(
+      { x: car.position.x, y: car.position.y + 1.8, z: car.position.z },
+      { x: target.x, y: target.y, z: target.z },
+      nearbySolids(car.position.x, distance, behind + 5), 0.35, 0.35,
+    );
+    if (cameraContact.hit) target.set(cameraContact.x, cameraContact.y, cameraContact.z);
     const cameraGround = drivingSurface(-target.z, target.x, environment);
     target.y = Math.max(target.y, cameraGround + 1.5);
-    // Keep vertical camera lag short so climbing/descending cannot crop the car.
-    const followY = THREE.MathUtils.damp(camera.position.y, target.y, 16, dt);
-    camera.position.lerp(target, 1 - Math.exp(-dt * 5));
-    camera.position.y = followY;
+    // Apply collision clearance after following, so smoothing cannot move the view through walls.
+    camera.position.copy(target);
     chaseLookAhead = THREE.MathUtils.damp(
       chaseLookAhead,
       flipTime >= 0 ? 2 : 4,
@@ -994,10 +1048,12 @@ export function createWorld(
     );
     camera.fov = THREE.MathUtils.damp(
       camera.fov,
-      portrait ? 57 : speed > 150 || flipTime >= 0 ? 50 : 44,
+      portrait ? 57 : 44,
       2,
       dt,
     );
+    // More depth precision at altitude prevents distant asphalt and paint from flickering.
+    camera.near = Math.min(2, 0.5 + altitude * 0.004);
     camera.updateProjectionMatrix();
     sky.position.copy(camera.position);
     sun.position
@@ -1027,10 +1083,14 @@ export function createWorld(
       night,
       exhaustSurfaceHeight,
     );
-    renderer.render(scene, camera);
+    // Only the neon city needs bloom; the coast keeps crisp natural daylight.
+    if (environment === "cyber") composer.render();
+    else renderer.render(scene, camera);
     if (now - lastReport > 100) {
       report({
-        speed: Math.round(speed),
+        // Keep the dashboard and audio based on speed magnitude, with a separate reverse indicator.
+        speed: Math.round(Math.abs(speed)),
+        reversing: speed < -0.1,
         distance: traveled / 1000,
         altitude: Math.round(altitude),
         charge: Math.round(charge),
@@ -1044,7 +1104,7 @@ export function createWorld(
             ),
         boosting: !controls.paused && boosting,
         flipping: flipTime >= 0,
-        surface: Math.abs(lane) > 3.5 ? "offroad" : "road",
+        surface: Math.abs(lane) > ROAD_HALF_WIDTH ? "offroad" : "road",
       });
       lastReport = now;
     }
@@ -1061,6 +1121,8 @@ export function createWorld(
     observer.disconnect();
     scene.traverse((o) => {
       if (o instanceof THREE.Mesh) {
+        // Release per-instance buffers when scenery leaves the streamed world.
+        if (o instanceof THREE.InstancedMesh) o.dispose();
         if (o.userData.ownedTexture instanceof THREE.Texture)
           o.userData.ownedTexture.dispose();
         o.geometry.dispose();
@@ -1069,10 +1131,12 @@ export function createWorld(
         );
       }
     });
-    foliageTexture.dispose();
+    cityWindows.dispose();
+    composer.dispose();
+    bloom.dispose();
+    outputPass.dispose();
     broadleafTexture.dispose();
     meadowTexture.dispose();
-    stoneTexture.dispose();
     grassNormal.dispose();
     roadNormal.dispose();
     grassTexture.dispose();

@@ -44,6 +44,9 @@ function Icon({ name, size = 20 }: { name: string; size?: number }) {
     ),
     arrow: <path d="M5 12h14m-5-5 5 5-5 5" />,
     chevron: <path d="m9 5 7 7-7 7" />,
+    // Scene icons distinguish the ocean drive from the city drive.
+    city: <path d="M3 21V9h5v12m0 0V3h7v18m0 0V7h6v14M1 21h22M11 7h1m-1 4h1m-1 4h1m6-4h1m-1 4h1" />,
+    coast: <path d="M2 17q3-3 6 0t6 0t8 0M2 21q3-3 6 0t6 0t8 0M3 12l5-8 6 8M16 3v6m-3-3h6" />,
     mountain: (
       <>
         <path d="m2 19 7-12 5 7 3-5 5 10H2Z" />
@@ -106,34 +109,26 @@ const places: Record<
   Environment,
   { title: string; subtitle: string; label: string }
 > = {
-  countryside: {
-    title: "Countryside",
-    subtitle: "Green fields. Quiet lanes.",
-    label: "THE COUNTRYSIDE, REIMAGINED",
-  },
+  // Two distinct drives replace the previous scenery collection.
   coast: {
     title: "Pacific Coast",
-    subtitle: "Ocean air. Open roads.",
-    label: "CALIFORNIA, REIMAGINED",
+    subtitle: "Wide roads. Green hills. Open ocean.",
+    label: "THE PACIFIC COAST",
   },
-  alpine: {
-    title: "Alpine Pass",
-    subtitle: "A little closer to the sky.",
-    label: "THE ALPS, REIMAGINED",
-  },
-  desert: {
-    title: "Desert Run",
-    subtitle: "Find your own horizon.",
-    label: "MOJAVE, REIMAGINED",
+  cyber: {
+    title: "Cyber City",
+    subtitle: "Glass towers. Neon lights. Wide roads.",
+    label: "THE CITY AFTER DARK",
   },
 };
 const initialControls: Controls = {
   flying: false,
   cruise: true,
-  paused: false,
+  // Hold the night city still until the player uses their first control.
+  paused: true,
   boost: false,
-  environment: "countryside",
-  daytime: "day",
+  environment: "cyber",
+  daytime: "night",
   keys: new Set(),
   reset: 0,
   recover: 0,
@@ -155,6 +150,9 @@ export default function Roadster() {
   const [panel, setPanel] = useState<"world" | "settings" | "help" | null>(
     null,
   );
+  // The opening guide is shown once per page load, before gameplay starts.
+  const [showGuide, setShowGuide] = useState(true);
+  const guideOpen = useRef(true);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState(false);
   const [sound, setSound] = useState(true);
@@ -167,9 +165,18 @@ export default function Roadster() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 2600);
   }
+  // Cyber City stays at night even when another control updates the settings.
   function update(patch: Partial<Controls>) {
     Object.assign(control.current, patch);
+    if (control.current.environment === "cyber") control.current.daytime = "night";
     setSettings({ ...control.current });
+  }
+  // The first control starts the drive and remains active in that same input.
+  function startDriving() {
+    if (!guideOpen.current) return;
+    guideOpen.current = false;
+    setShowGuide(false);
+    update({ paused: false });
   }
   function holdButton(event: ReactPointerEvent<HTMLButtonElement>, key: string) {
     if (event.button !== 0) return;
@@ -313,6 +320,9 @@ export default function Roadster() {
         return;
       }
       const key = event.key.toLowerCase();
+      // Only game controls dismiss the guide; typing unrelated keys leaves it open.
+      const starting = guideOpen.current && ["w", "a", "s", "d", "arrowup", "arrowdown", "arrowleft", "arrowright", " ", "shift", "x", "e", "q", "p", "b", "r", "f"].includes(key);
+      if (starting) startDriving();
       if (
         [" ", "arrowup", "arrowdown", "arrowleft", "arrowright"].includes(key)
       )
@@ -337,7 +347,7 @@ export default function Roadster() {
       if (key === " ") flight();
       if (key === "x") flip();
       if (key === "b") returnToRoad();
-      if (key === "p") update({ paused: !control.current.paused });
+      if (key === "p" && !starting) update({ paused: !control.current.paused });
       if (key === "r") {
         update({ reset: control.current.reset + 1, flying: false });
         notify("A fresh stretch of road.");
@@ -360,13 +370,18 @@ export default function Roadster() {
     };
   });
   function selectEnvironment(environment: Environment) {
-    update({ environment });
+    // Give each drive its intended lighting while keeping time controls available.
+    update({ environment, daytime: environment === "cyber" ? "night" : "day", recover: settings.recover + 1 });
     notify(`${places[environment].title} · a new perspective`);
   }
   const place = places[settings.environment];
   return (
     <main
       className={`experience ${settings.daytime === "night" ? "night" : ""}`}
+      // Touch and mouse controls also start the drive before running their action.
+      onPointerDownCapture={(event) => {
+        if (event.target instanceof Element && event.target.closest("button")) startDriving();
+      }}
     >
       <div
         className="world"
@@ -399,7 +414,8 @@ export default function Roadster() {
       <section className="minimal-telemetry" aria-label="Driving dashboard">
         <div className="speed">
           <strong>{telemetry.speed.toString().padStart(2, "0")}</strong>
-          <span>km/h</span>
+          {/* Reverse stays visible while the speed value remains easy to read. */}
+          <span>{telemetry.reversing ? "R · km/h" : "km/h"}</span>
         </div>
         <div className="surface-label">
           {telemetry.flipping
@@ -558,7 +574,8 @@ export default function Roadster() {
         </div>
         <div>
           {[
-            ["s", "Brake"],
+            // Hold this pedal past a stop to back up.
+            ["s", "Brake / reverse"],
             ["w", "Go"],
             ["shift", "Boost"],
           ].map(([key, label]) => (
@@ -577,7 +594,7 @@ export default function Roadster() {
           ))}
         </div>
       </div>
-      {settings.paused && (
+      {settings.paused && !showGuide && (
         <div className="pause-indicator glass">
           <Icon name="pause" size={15} /> Taking a breath{" "}
           <button onClick={() => update({ paused: false })}>
@@ -604,6 +621,26 @@ export default function Roadster() {
           {error && (
             <button onClick={() => window.location.reload()}>Try again</button>
           )}
+        </div>
+      )}
+      {/* First-time controls stay visible over the paused city until a driving input arrives. */}
+      {showGuide && ready && (
+        <div className="modal-backdrop">
+          <section className="panel welcome-guide" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
+            <h2 id="welcome-title">Take the wheel.</h2>
+            <p>Press any driving key to begin.</p>
+            <div className="controls-list">
+              {[
+                ["W / S", "Go / brake / reverse"],
+                ["A / D", "Steer"],
+                ["SHIFT", "Boost"],
+                ["SPACE", "Fly / land"],
+                ["E / Q", "Climb / descend"],
+              ].map(([key, label]) => <div key={key}><kbd>{key}</kbd><span>{label}</span></div>)}
+            </div>
+            <p className="guide-extras">X roll · P pause · B return · R reset</p>
+            <button className="world-done" autoFocus onClick={startDriving}>Start driving <Icon name="arrow" size={16} /></button>
+          </section>
         </div>
       )}
       {panel && (
@@ -634,28 +671,27 @@ export default function Roadster() {
             </h2>
             {panel === "world" && (
               <>
-                <p>Four landscapes. An endless way to get there.</p>
-                <label className="setting-label">TIME OF DAY</label>
-                <div
-                  className="segmented"
-                  role="group"
-                  aria-label="Time of day"
-                >
-                  {(["day", "sunset", "night"] as Daytime[]).map((day) => (
-                    <button
-                      key={day}
-                      aria-pressed={settings.daytime === day}
-                      className={settings.daytime === day ? "selected" : ""}
-                      onClick={() => update({ daytime: day })}
-                    >
-                      {day === "day"
-                        ? "Daylight"
-                        : day === "sunset"
-                          ? "Golden hour"
-                          : "Nightfall"}
-                    </button>
-                  ))}
-                </div>
+                <p>Two worlds. Wide roads. No end in sight.</p>
+                {/* Only the coast offers daylight and golden hour. */}
+                {settings.environment === "coast" ? (
+                  <>
+                    <label className="setting-label">TIME OF DAY</label>
+                    <div className="segmented" role="group" aria-label="Time of day">
+                      {(["day", "sunset", "night"] as Daytime[]).map((day) => (
+                        <button
+                          key={day}
+                          aria-pressed={settings.daytime === day}
+                          className={settings.daytime === day ? "selected" : ""}
+                          onClick={() => update({ daytime: day })}
+                        >
+                          {day === "day" ? "Daylight" : day === "sunset" ? "Golden hour" : "Nightfall"}
+                        </button>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <p className="setting-label">NIGHT DRIVE · CYBER CITY</p>
+                )}
                 <div className="world-options">
                   {(Object.keys(places) as Environment[]).map((env, i) => (
                     <button
@@ -665,7 +701,7 @@ export default function Roadster() {
                       onClick={() => selectEnvironment(env)}
                     >
                       <span className="world-art">
-                        <Icon name="mountain" size={44} />
+                        <Icon name={env === "cyber" ? "city" : "coast"} size={44} />
                         <span>0{i + 1}</span>
                       </span>
                       <strong>{places[env].title}</strong>
@@ -710,7 +746,9 @@ export default function Roadster() {
               <>
                 <p>No score to chase. Just a road to follow.</p>
                 <div className="touch-guide">
-                  Hold the arrows to steer and Go or Brake to change speed.
+                  {/* Explain the shared brake and reverse pedal for touch drivers. */}
+                  Hold the arrows to steer and Go or Brake / reverse to change speed.
+                  Keep holding Brake / reverse after stopping to back up.
                   Hold Boost for extra speed. You can steer and use a pedal at
                   the same time. Tap lift off to fly, then hold climb or descend
                   to change altitude. Auto cruise keeps you moving hands-free.
@@ -718,7 +756,8 @@ export default function Roadster() {
                 <div className="controls-list">
                   {[
                     ["W / ↑", "Accelerate"],
-                    ["S / ↓", "Brake"],
+                    // S brakes first, then backs up while held.
+                    ["S / ↓", "Brake / hold to reverse"],
                     ["A D / ← →", "Steer"],
                     ["SPACE", "Lift off / assisted landing"],
                     ["SHIFT", "Cold-gas boost"],

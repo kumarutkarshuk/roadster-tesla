@@ -88,7 +88,7 @@ export function createExhaust(scene: THREE.Scene) {
                          + noise(p*9.0 - age*5.0 + seed) * 0.35;
         float edge = 1.0 - smoothstep(0.2, 1.0, length(p) + (turbulence-0.5)*0.3);
         float density = edge * (0.55 + turbulence*0.45);
-        float alpha = density * pow(1.0-age, mix(1.6, 1.15, groundCloud)) * mix(0.48, 0.34, groundCloud) * cameraFade;
+        float alpha = density * pow(1.0-age, mix(1.6, 1.15, groundCloud)) * mix(0.42, 0.18, groundCloud) * cameraFade;
         if (alpha < 0.004) discard;
         // Neutral condensation, not an emissive flame. A shaded edge preserves
         // contrast against the sky while the core reads against dark scenery.
@@ -155,11 +155,13 @@ export function createExhaust(scene: THREE.Scene) {
       for (const p of particles) {
         if (p.age >= p.lifetime) continue;
         p.age += dt;
-        if (p.grounded) {
-          // The wall jet loses momentum as it mixes with the surrounding air.
-          const drag = Math.exp(-dt * 1.25);
-          p.velocity.x *= drag;
-          p.velocity.z *= drag;
+        // Air drag and small rolling eddies break up straight, tube-like trails.
+        const drag = Math.exp(-dt * (p.grounded ? 2.2 : 1.1));
+        p.velocity.multiplyScalar(drag);
+        if (!p.grounded) {
+          p.velocity.x += Math.sin(p.seed + p.age * 7) * dt * 1.8;
+          p.velocity.z += Math.cos(p.seed * 1.7 + p.age * 5) * dt * 1.8;
+          p.velocity.y += dt * 0.35;
         }
         p.position.addScaledVector(p.velocity, dt);
       }
@@ -195,7 +197,7 @@ export function createExhaust(scene: THREE.Scene) {
           dt *
           (outlet.kind === "yaw"
             ? 380 * Math.sqrt(strength)
-            : 200 + strength * 180);
+            : (outlet.kind === "lift" ? 150 : 240) * Math.sqrt(strength) + strength * 140);
         const count = Math.floor(outlet.carry);
         outlet.carry -= count;
         for (let j = 0; j < count; j++) {
@@ -206,9 +208,11 @@ export function createExhaust(scene: THREE.Scene) {
             .copy(previous.direction)
             .lerp(direction, fraction)
             .normalize();
-          const spread = 0.55;
+          // Wider, varied puffs make a turbulent plume while keeping the nozzle root tight.
+          const spread = 1.3 + strength * 0.7;
           p.velocity
             .copy(velocity)
+            .multiplyScalar(0.85)
             .addScaledVector(emissionDirection, 7 + strength * 7);
           p.velocity.x += (Math.random() - 0.5) * spread;
           p.velocity.y += (Math.random() - 0.5) * spread;
@@ -221,10 +225,10 @@ export function createExhaust(scene: THREE.Scene) {
             .lerp(origin, fraction)
             .addScaledVector(p.velocity, p.age);
           p.lifetime =
-            (outlet.kind === "lift" ? 0.6 : 0.32) +
+            (outlet.kind === "lift" ? 0.48 : 0.55) +
             strength * 0.18 +
             Math.random() * 0.12;
-          p.size = 0.16 + strength * 0.08;
+          p.size = (0.22 + strength * 0.12) * (0.8 + Math.random() * 0.4);
           p.seed = Math.random() * 100;
           p.grounded = false;
         }
@@ -241,7 +245,7 @@ export function createExhaust(scene: THREE.Scene) {
           if (!p.grounded && p.position.y <= floor + 0.12) {
             // Represent the mixed ground flow with fewer, larger eddies instead
             // of stacking every narrow-jet sample into an opaque white sheet.
-            if (p.seed % 1 > 0.4) {
+            if (p.seed % 1 > 0.22) {
               p.age = p.lifetime;
               continue;
             }
@@ -274,7 +278,8 @@ export function createExhaust(scene: THREE.Scene) {
             p.position.y = floor + 0.18;
             p.grounded = true;
             p.age = 0;
-            p.lifetime = 1.25 + Math.random() * 0.6;
+            // Landing mist clears quickly instead of hiding the car after touchdown.
+            p.lifetime = 0.55 + Math.random() * 0.35;
             p.size = 0.65 + Math.min(impact, 18) * 0.025;
           }
           if (p.grounded) {
@@ -298,7 +303,7 @@ export function createExhaust(scene: THREE.Scene) {
         transform.quaternion.copy(camera.quaternion);
         transform.rotateZ(p.seed + age * 0.7);
         transform.scale.setScalar(
-          p.size + (p.grounded ? age * 3.2 : age * age * 1.15),
+          p.size + (p.grounded ? age * 3.2 : age * 1.4 + age * age * 0.8),
         );
         transform.updateMatrix();
         mesh.setMatrixAt(i, transform.matrix);
