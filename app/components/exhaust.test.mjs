@@ -55,3 +55,29 @@ test("overlapping smoke uses viewing depth instead of radial distance", () => {
   mesh.geometry.dispose();
   mesh.material.dispose();
 });
+
+// High-speed gas stays attached at the nozzle on both ascent and re-entry.
+test("space entry and exit keep new smoke connected to moving nozzles", () => {
+  for (const speed of [-8000, 8000]) {
+    const scene = new THREE.Scene(), car = new THREE.Object3D();
+    const camera = new THREE.PerspectiveCamera();
+    const exhaust = createExhaust(scene);
+    const outlet = { position: new THREE.Vector3(), direction: new THREE.Vector3(0,-1,0), kind: "lift", torque: 0, carry: 0 };
+    const velocity = new THREE.Vector3(0,speed,0);
+    const matrix = new THREE.Matrix4(), position = new THREE.Vector3();
+    car.position.y = 100000;
+    for (let frame = 0; frame < 3; frame++) {
+      car.position.addScaledVector(velocity, .05);
+      exhaust.update(.05,car,camera,[outlet],velocity,1,false,0,0,false,()=>0,.01);
+      const mesh = scene.getObjectByName("Pressurized air");
+      let nearest = Infinity;
+      for (let i=0;i<mesh.count;i++) {
+        mesh.getMatrixAt(i,matrix);
+        position.setFromMatrixPosition(matrix);
+        nearest = Math.min(nearest,position.distanceTo(car.position));
+      }
+      assert.ok(nearest < .3, `smoke disconnected at ${speed} m/s: gap ${nearest}`);
+    }
+    exhaust.clear();
+  }
+});

@@ -36,13 +36,46 @@ export function makeSurfaceTexture(kind: "grass" | "asphalt") {
   return texture;
 }
 
+// A local Earth image keeps continents and cloud systems detailed, even offline.
 export function makeSky() {
-  return new THREE.Mesh(
+  const earthTexture = new THREE.TextureLoader().load("/textures/earth-day.jpg");
+  earthTexture.colorSpace = THREE.SRGBColorSpace;
+  earthTexture.anisotropy = 8;
+  // Separate cloud and city-light layers give Earth depth across the day/night edge.
+  const cloudTexture = new THREE.TextureLoader().load("/textures/earth-clouds.jpg");
+  const nightTexture = new THREE.TextureLoader().load("/textures/earth-night.jpg");
+  nightTexture.colorSpace = THREE.SRGBColorSpace;
+  for (const texture of [earthTexture, cloudTexture, nightTexture]) texture.wrapS = THREE.RepeatWrapping;
+  const planetMaps = { earth: earthTexture, moon: new THREE.TextureLoader().load("/textures/moon.jpg"),
+    mars: new THREE.TextureLoader().load("/textures/mars.jpg") };
+  // Real surface maps make each destination recognisable without painted backdrop swaps.
+  for (const texture of Object.values(planetMaps)) {
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.anisotropy = 8;
+  }
+  const sky = new THREE.Mesh(
     new THREE.SphereGeometry(1900, 32, 24),
     new THREE.ShaderMaterial({
       side: THREE.BackSide,
       depthWrite: false,
       uniforms: {
+        // Altitude reveals the curved planet and the dark sky above it.
+        altitude: { value: 0 },
+        planet: { value: 0 },
+        orbitView: { value: 0 },
+        destination: { value: -1 },
+        destinationMap: { value: earthTexture },
+        moonMap: { value: planetMaps.moon }, marsMap: { value: planetMaps.mars }, homeMap: { value: earthTexture },
+        bearing: { value: 0 },
+        cometBearing: { value: 0 },
+        travel: { value: 0 },
+        // Travel supplies one continuous destination position through the arrival frame.
+        targetPosition: { value: new THREE.Vector3() },
+        cameraXZ: { value: new THREE.Vector2() },
+        earthMap: { value: earthTexture },
+        cloudMap: { value: cloudTexture },
+        nightMap: { value: nightTexture },
         top: { value: new THREE.Color("#64788f") },
         horizon: { value: new THREE.Color("#e7a37d") },
         glow: { value: new THREE.Color("#ffce92") },
@@ -57,11 +90,63 @@ export function makeSky() {
         "varying vec3 direction;void main(){direction=position;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}",
       fragmentShader: `
       varying vec3 direction;
-      uniform vec3 top,horizon,glow,cloud,sunDirection;
-      uniform float strength,time;
+      uniform vec3 top,horizon,glow,cloud,sunDirection,targetPosition;
+      uniform float strength,time,altitude,planet,orbitView,destination,travel,bearing,cometBearing;
+      uniform vec2 cameraXZ;
+      uniform sampler2D earthMap,cloudMap,nightMap,destinationMap,moonMap,marsMap,homeMap;
       float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
       float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}
       float fbm(vec2 p){float n=0.,a=.5;for(int i=0;i<5;i++){n+=a*noise(p);p=p*2.03+3.7;a*=.5;}return n;}
+
+      // Keep the observer outside the sphere while the globe grows into a local horizon.
+      float bodyRadius(float id){return id<.5?6371.:id<1.5?1737.:3390.;}
+      vec3 bodyOrigin(float id,float height,float orbital){
+        float radius=bodyRadius(id);
+        // Landing reverses launch: the surface stays below and expands with decreasing height.
+        return vec3(0.,radius+max(.01,height*.001),0.);
+      }
+      // Unselected worlds keep their original sky positions throughout the trip.
+      vec3 distantOrigin(float id){
+        float direction=id<.5?-2.2:id<1.5?.8:2.5;
+        return normalize(vec3(-sin(direction),-.15,cos(direction)))*bodyRadius(id)*24.;
+      }
+      vec4 bodyView(vec3 ray,vec3 origin,float bodyId,sampler2D surfaceMap,float orbital,out float hitDistance){
+        float radius=bodyRadius(bodyId);
+        float b=dot(origin,ray), disc=b*b-dot(origin,origin)+radius*radius;
+        hitDistance=1.e12;
+        vec3 bodySun=orbital>.5?normalize(vec3(-.48,.3,1.)):sunDirection;
+        if(disc>0. && b<0.){
+          hitDistance=-b-sqrt(disc);
+          vec3 normal=normalize(origin+ray*hitDistance);
+          // Rotate the globe so the launch view crosses oceans and inhabited latitudes.
+          vec3 mapped=vec3(normal.x,normal.y*.54-normal.z*.841665,normal.y*.841665+normal.z*.54);
+          vec2 uv=vec2(atan(mapped.z,mapped.x)/6.283185+.5,asin(mapped.y)/3.141593+.5);
+          vec3 earth=texture2D(surfaceMap,uv).rgb;
+          float oceanMask=bodyId<.5?smoothstep(.02,.12,earth.b-earth.r):0.;
+          float solar=dot(normal,bodySun);
+          float light=smoothstep(-.06,.45,solar);
+          // Offset clouds cast soft shadows on the ground below them.
+          vec2 cloudUv=uv+vec2(time*.000003,0.);
+          float cloudCover=bodyId<.5?texture2D(cloudMap,cloudUv).r:0.;
+          float cloudShadow=bodyId<.5?texture2D(cloudMap,cloudUv+vec2(.0015,-.001)).r:0.;
+          earth*=1.-cloudShadow*.35;
+          earth*=.008+light*1.1;
+          vec3 cityLights=bodyId<.5?texture2D(nightMap,uv).rgb:vec3(0.);
+          earth+=cityLights*(1.-smoothstep(-.15,.08,solar))*(1.-cloudCover)*1.4;
+          earth=mix(earth,vec3(.92,.96,1.)*(.018+light*1.25),smoothstep(.15,.9,cloudCover));
+          float spec=pow(max(dot(reflect(-bodySun,normal),-ray),0.),90.);
+          earth+=vec3(.8,.87,1.)*spec*oceanMask*(1.-cloudCover)*.55;
+          float rim=pow(1.-max(dot(normal,-ray),0.),4.);
+          if(bodyId<.5) earth=mix(earth,vec3(.12,.39,.85)*(.25+light),rim*.7);
+          if(bodyId>1.5 && bodyId<2.5) earth+=vec3(.3,.09,.025)*rim*light*.25;
+
+          return vec4(earth,1.);
+        }
+        // The limb appears gradually at high altitude, without a solid blue horizon strip.
+        float tangent=sqrt(max(0.,dot(origin,origin)-b*b))-radius;
+        float limb=(bodyId<.5 && b<0.)?exp(-max(0.,tangent)/8.)*.32:0.;
+        return vec4(vec3(.07,.22,.55),limb);
+      }
       void main(){
         vec3 ray=normalize(direction);float h=max(ray.y,0.);
         vec3 color=mix(horizon,top,pow(smoothstep(-.02,.65,ray.y),.55));
@@ -73,13 +158,113 @@ export function makeSky() {
         float c=fbm(p*vec2(.7,2.8));
         float coverage=smoothstep(.49,.72,c)*smoothstep(.015,.15,h)*(1.-smoothstep(.55,.9,h));
         vec3 litCloud=mix(cloud,glow,.35*pow(sd,8.));
-        color=mix(color,litCloud,coverage*.78);
+        color=mix(color,litCloud,coverage*.78*(1.-smoothstep(100.,2500.,altitude)));
+        // Stable pin-point stars emerge as atmospheric scattering falls away.
+        float vacuum=planet<.5?smoothstep(3000.,100000.,altitude):1.;
+        // Uneven star positions and magnitudes avoid a visible grid of equally bright dots.
+        vec2 starUV=vec2(atan(ray.z,ray.x),asin(ray.y))*vec2(420.,420.);
+        vec2 cell=floor(starUV), offset=fract(starUV)-.5;
+        vec2 jitter=vec2(hash(cell+13.),hash(cell+29.))*.62-.31;
+        float magnitude=pow(hash(cell+71.),8.);
+        float radius=.045+magnitude*.14;
+        float aa=max(.025,length(fwidth(starUV))*.45);
+        float star=(1.-smoothstep(max(0.,radius-aa),radius+aa,length(offset-jitter)))*step(.993,hash(cell));
+        vec3 tint=mix(vec3(.82,.89,1.),vec3(1.,.91,.79),hash(cell+8.));
+        vec3 space=vec3(.0001,.00015,.00025)+star*tint*(.09+magnitude*1.7);
+        space+=vec3(1.,.96,.88)*smoothstep(.99992,.99996,sd)*8.;
+        color=mix(color,space,vacuum);
+        // Both worlds share the same sky during travel; no midpoint swap or white flash.
+        float orbital=planet<.5?orbitView:1.;
+        vec3 origin=bodyOrigin(planet,altitude,orbital);
+        if(destination>=0.){
+          // Ease away along the chosen route instead of dragging Earth sideways.
+          float departure=travel*travel*(3.-2.*travel);
+          vec3 route=normalize(distantOrigin(destination));
+          origin-=route*bodyRadius(planet)*departure*4.;
+        }
+        float depth;
+        vec4 body=bodyView(ray,origin,planet,earthMap,orbital,depth);
+        float planetBlend=planet<.5 && orbitView<.5?smoothstep(12000.,60000.,altitude):1.;
+        color=mix(color,body.rgb,body.a*planetBlend);
+        // Distant city ground fades into night haze instead of a bright empty backdrop.
+        if(planet<.5) color=mix(color,horizon,(1.-smoothstep(-.12,.015,ray.y))*(1.-planetBlend));
+        if(destination>=0.){
+          vec3 targetOrigin=targetPosition;
+          float targetDepth;
+          vec4 targetBody=bodyView(ray,targetOrigin,destination,destinationMap,1.,targetDepth);
+          // Remember the nearest surface so a farther world cannot paint over the destination.
+          if(targetDepth<depth || body.a<.01) {
+            color=mix(color,targetBody.rgb,targetBody.a);
+            if(targetBody.a>.99) depth=targetDepth;
+          }
+        }
+        // Worlds remain present through ascent; haze clears gradually before space.
+        {
+          float visibility=planet<.5?mix(.12,1.,smoothstep(0.,60000.,altitude)):1.;
+          float distantDepth; vec4 distant;
+          if(planet!=0. && destination!=0.){distant=bodyView(ray,distantOrigin(0.),0.,homeMap,1.,distantDepth);if(distantDepth<depth){color=mix(color,distant.rgb,distant.a*visibility);if(distant.a>.99)depth=distantDepth;}}
+          if(planet!=1. && destination!=1.){distant=bodyView(ray,distantOrigin(1.),1.,moonMap,1.,distantDepth);if(distantDepth<depth){color=mix(color,distant.rgb,distant.a*visibility);if(distant.a>.99)depth=distantDepth;}}
+          if(planet!=2. && destination!=2.){distant=bodyView(ray,distantOrigin(2.),2.,marsMap,1.,distantDepth);if(distantDepth<depth){color=mix(color,distant.rgb,distant.a*visibility);if(distant.a>.99)depth=distantDepth;}}
+          // Planets hide every covered comet pixel, including the head and both tails.
+          // bodyView leaves depth at 1.e12 only when this ray misses all planet surfaces.
+          if(depth>=1.e12) for(int cometIndex=0;cometIndex<2;cometIndex++){
+            float phase=cometBearing+time*.000001+float(cometIndex)*2.7;
+            vec3 head=normalize(vec3(sin(phase),.025+float(cometIndex)*.22,-cos(phase)));
+            vec3 tangent=normalize(cross(head,vec3(0.,1.,0.)));
+            vec3 across=normalize(cross(head,tangent));
+            float along=dot(ray-head,tangent), crossTail=dot(ray-head,across);
+            float separation=length(ray-head);
+            float coma=exp(-pow(separation/.004,2.))*.38+exp(-pow(separation/.0011,2.))*.5;
+            float ahead=smoothstep(-.003,.003,along)*(1.-smoothstep(.045,.085,along));
+            float dustWidth=.0025+max(0.,along)*.14;
+            float dust=ahead*exp(-pow((crossTail-along*along*1.1)/dustWidth,2.))*exp(-max(0.,along)*36.);
+            float ion=ahead*exp(-pow(crossTail/(.001+max(0.,along)*.025),2.))*exp(-max(0.,along)*30.);
+            color+=(vec3(.8,.84,.82)*coma+vec3(.65,.59,.47)*dust*.18+vec3(.28,.43,.62)*ion*.09)*vacuum;
+          }
+        }
+        // Finite cloud decks provide parallax below orbit, instead of a blank flat layer.
+        if(planet<.5 && orbitView<.5 && destination<0.){
+          float deckBlend=smoothstep(120.,650.,altitude)*(1.-smoothstep(20000.,60000.,altitude));
+          for(int layer=0;layer<3;layer++){
+            float layerHeight=1300.+float(layer)*650.;
+            // Keep clouds on the correct side of the horizon when looking slightly down.
+            float cloudRayY=ray.y<0.?min(ray.y,-.00001):max(ray.y,.00001);
+            float travelToCloud=(layerHeight-altitude)/cloudRayY;
+            if(travelToCloud>0. && travelToCloud<120000.){
+              vec2 cloudPoint=(cameraXZ+ray.xz*travelToCloud)*.0007+float(layer)*17.;
+              float billow=fbm(cloudPoint)+fbm(cloudPoint*3.1)*.22;
+              float cover=smoothstep(.38,.76,billow);
+              float optical=1.-exp(-travelToCloud*.0015);
+              vec3 cloudLight=mix(horizon,cloud,.3+.25*billow);
+              // Fade distant clouds into the sky before the deck ends, avoiding a colour seam.
+              float horizonFade=1.-smoothstep(40000.,120000.,travelToCloud);
+              float grazingFade=smoothstep(.001,.015,abs(ray.y));
+              color=mix(color,cloudLight,cover*optical*deckBlend*horizonFade*grazingFade*.7);
+            }
+          }
+          float mist=exp(-pow((altitude-2100.)/1100.,2.))*.4;
+          color=mix(color,mix(horizon,cloud,.3),mist);
+        }
+        // Dust colours the near-surface Martian sky; the Moon keeps its airless black sky.
+        if(planet>1.5 && planet<2.5) {
+          vec3 dust=mix(vec3(.43,.25,.15),vec3(.18,.105,.065),smoothstep(0.,.8,ray.y));
+          dust+=vec3(1.,.83,.65)*smoothstep(.99975,.9999,sd)*2.;
+          color=mix(dust,color,smoothstep(1500.,35000.,altitude));
+        }
         gl_FragColor=vec4(color,1.);
         #include <tonemapping_fragment>
         #include <colorspace_fragment>
       }`,
     }),
   );
+  // Draw the sky behind distant city blocks, even beyond the sky sphere.
+  sky.renderOrder = -100;
+  sky.material.depthTest = false;
+  // The world's cleanup releases the planet image along with the sky material.
+  sky.userData.ownedTexture = earthTexture;
+  sky.userData.ownedTextures = [cloudTexture, nightTexture, planetMaps.moon, planetMaps.mars];
+  sky.userData.planetMaps = planetMaps;
+  return sky;
 }
 
 export function makeOcean() {

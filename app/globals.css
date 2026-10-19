@@ -991,3 +991,66 @@ a {
 .welcome-guide .world-done {
   margin-top: 0;
 }
+
+/* Destination controls stay above driving controls on wide and narrow screens. */
+.planet-travel {
+  position: absolute; top: 104px; right: 38px; max-width: calc(100vw - 32px);
+  padding: 12px 14px; border: 1px solid #ffffff26; border-radius: 12px;
+  background: #06101ccc; backdrop-filter: blur(12px); color: #e2eaf3;
+  font-size: 11px;
+}
+.planet-travel > span { display: block; margin-bottom: 9px; }
+.planet-travel > div { display: flex; gap: 6px; }
+.planet-travel button { padding: 9px 10px; border-radius: 6px; border: 1px solid #ffffff26; text-transform: capitalize; }
+.planet-travel button[aria-pressed="true"] { background: #b9daf42b; border-color: #adcce7; }
+.planet-travel button:disabled { opacity: .6; }
+.planet-travel .space-return { border: 0; margin-top: 8px; padding: 5px 0; font-size: 10px; opacity: .7; }
+@media (max-width: 760px) {
+  .planet-travel { top: 84px; right: 16px; padding: 9px; }
+  .planet-travel button { min-height: 44px; }
+}
+
+/* Centre altitude labels and keep both touch targets below the car on mobile. */
+.altitude-controls button { justify-content: center; text-align: center; }
+@media (max-width: 760px), (pointer: coarse) {
+  .altitude-controls { bottom: calc(124px + var(--mobile-bottom, 0px)); gap: 8px; }
+  .altitude-controls button { min-width: 68px; min-height: 44px; }
+  .flight-control, .minimal-telemetry { bottom: calc(182px + var(--mobile-bottom, 0px)); }
+  .planet-travel { font-size: 10px; padding: 8px; }
+  .planet-travel > span { margin-bottom: 4px; }
+  .planet-travel .space-return { display: block; min-height: 30px; margin-top: 3px; }
+}
+/* Short landscape screens put altitude controls along the top edge, away from the car. */
+@media (max-height: 500px) and (orientation: landscape) {
+  .altitude-controls { top: 64px; bottom: auto; right: 16px; }
+  .planet-travel { left: 16px; right: auto; top: 64px; }
+  .flight-control, .minimal-telemetry { bottom: calc(132px + var(--mobile-bottom, 0px)); }
+}
+
+/* Separate landing and return actions; highlight landing when the surface is close. */
+.planet-travel .space-return { display: block; width: 100%; text-align: center; min-height: 34px; margin-top: 8px; white-space: normal; }
+.planet-travel .landing-ready { border: 1px solid #c6dbea; border-radius: 8px; animation: landing-pulse 1.8s ease-in-out infinite; }
+@keyframes landing-pulse { 50% { background: #b6d7ed26; box-shadow: 0 0 16px #c6dbea35; } }
+@media (prefers-reduced-motion: reduce) { .planet-travel .landing-ready { animation: none; } }
+
+/* Launch guidance and the small compass stay in the upper corner, clear of the car. */
+.launch-progress { position:absolute; left:38px; top:110px; width:210px; padding:12px; background:#06101cbb; border:1px solid #ffffff26; border-radius:10px; font-size:11px; }
+.launch-progress span,.launch-progress small { display:block; }
+.launch-progress progress { display:block; width:100%; height:6px; margin:9px 0; accent-color:#c9e4f4; }
+.planet-map { position:absolute; left:38px; top:105px; width:140px; height:140px; background:#06101cbb; border:1px solid #ffffff26; border-radius:50%; }
+.planet-map > span { position:absolute; top:-19px; width:100%; text-align:center; font-size:10px; color:#d4e4ef; }
+.planet-map svg { width:100%; height:100%; fill:none; stroke:#b9d8ed55; stroke-width:.7; }
+.planet-map .map-car { fill:#ecf4fb; stroke:none; }
+.planet-map button { position:absolute; transform:translate(-50%,-50%); color:#e5eff7; background:#142333; border:1px solid #9bb9cf66; border-radius:12px; padding:5px; font-size:10px; text-transform:capitalize; }
+@media(max-width:760px) { .launch-progress { left:16px; top:88px; width:160px; font-size:10px; } .planet-map { left:16px; top:104px; width:112px; height:112px; } }
+@media(max-height:500px) and (orientation:landscape) { .planet-map { left:50%; top:26px; width:100px; height:100px; } .launch-progress { left:50%; top:24px; width:170px; } }
+
+/* A clear landing cue appears before the short final approach and stops after activation. */
+.planet-travel .landing-ready { opacity:1; color:#fff4db; font-weight:600; border:2px solid #f0c582; background:#9c65283b; animation:landing-pulse 1.2s ease-in-out infinite; }
+@keyframes landing-pulse { 0%,100% { box-shadow:0 0 0 0 #f0c58200; border-color:#bda179; } 50% { box-shadow:0 0 0 5px #f0c58225,0 0 22px #f0c58244; border-color:#ffe1a8; background:#b77c4355; } }
+@media(prefers-reduced-motion:reduce) { .planet-travel .landing-ready { animation:none; border-color:#ffe1a8; } }
+
+/* Keep road bends readable inside the always-visible map. */
+.planet-map svg { overflow:hidden; border-radius:50%; }
+.planet-map .map-road { stroke:#efc987; stroke-width:4; fill:none; }
+.launch-progress { top:270px; }

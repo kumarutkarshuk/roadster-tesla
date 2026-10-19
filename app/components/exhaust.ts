@@ -51,7 +51,7 @@ export function createExhaust(scene: THREE.Scene) {
     depthWrite: false,
     depthTest: true,
     side: THREE.DoubleSide,
-    uniforms: { light: { value: 1 }, nearPlane: { value: 0.1 } },
+    uniforms: { density: { value: 1 }, light: { value: 1 }, nearPlane: { value: 0.1 } },
     vertexShader: `
       uniform float nearPlane;
       attribute float gasLife;
@@ -71,7 +71,7 @@ export function createExhaust(scene: THREE.Scene) {
       }
     `,
     fragmentShader: `
-      uniform float light;
+      uniform float light,density;
       varying vec2 puffUv;
       varying float age;
       varying float seed;
@@ -88,7 +88,7 @@ export function createExhaust(scene: THREE.Scene) {
                          + noise(p*9.0 - age*5.0 + seed) * 0.35;
         float edge = 1.0 - smoothstep(0.2, 1.0, length(p) + (turbulence-0.5)*0.3);
         float density = edge * (0.55 + turbulence*0.45);
-        float alpha = density * pow(1.0-age, mix(1.6, 1.15, groundCloud)) * mix(0.42, 0.18, groundCloud) * cameraFade;
+        float alpha = density * pow(1.0-age, mix(1.6, 1.15, groundCloud)) * mix(0.42, 0.18, groundCloud) * cameraFade * density;
         if (alpha < 0.004) discard;
         // Neutral condensation, not an emissive flame. A shaded edge preserves
         // contrast against the sky while the core reads against dark scenery.
@@ -111,6 +111,8 @@ export function createExhaust(scene: THREE.Scene) {
   const particles = Array.from({ length: capacity }, () => ({
     position: new THREE.Vector3(),
     velocity: new THREE.Vector3(),
+    carrier: new THREE.Vector3(),
+    spacing: 0,
     age: 1,
     lifetime: 0,
     size: 0,
@@ -134,6 +136,8 @@ export function createExhaust(scene: THREE.Scene) {
   const surfaceNormal = new THREE.Vector3();
   const radialFlow = new THREE.Vector3();
   const cameraDirection = new THREE.Vector3();
+  const cameraRight = new THREE.Vector3(), cameraUp = new THREE.Vector3();
+  const relativeVelocity = new THREE.Vector3();
 
   return {
     update(
@@ -148,6 +152,7 @@ export function createExhaust(scene: THREE.Scene) {
       yaw: number,
       night: boolean,
       surfaceHeight: (x: number, z: number) => number,
+      airDensity = 1,
     ) {
       car.updateMatrixWorld(true);
       inverseRotation.copy(car.quaternion).invert();
@@ -157,7 +162,10 @@ export function createExhaust(scene: THREE.Scene) {
         p.age += dt;
         // Air drag and small rolling eddies break up straight, tube-like trails.
         const drag = Math.exp(-dt * (p.grounded ? 2.2 : 1.1));
-        p.velocity.multiplyScalar(drag);
+        // Dense air slows the carried gas too, so braking does not throw white columns ahead of the car.
+        p.velocity.sub(p.carrier).multiplyScalar(drag);
+        p.carrier.multiplyScalar(Math.exp(-dt * Math.max(0, airDensity) * 3));
+        p.velocity.add(p.carrier);
         if (!p.grounded) {
           p.velocity.x += Math.sin(p.seed + p.age * 7) * dt * 1.8;
           p.velocity.z += Math.cos(p.seed * 1.7 + p.age * 5) * dt * 1.8;
@@ -190,14 +198,14 @@ export function createExhaust(scene: THREE.Scene) {
         // A small step beyond the nozzle prevents the body from hiding the root.
         origin.addScaledVector(direction, 0.09);
         const previous = previousOutlets.get(outlet) ?? {
-          position: origin.clone(),
+          // A newly firing nozzle also spans the last frame of travel.
+          position: origin.clone().addScaledVector(velocity, -dt),
           direction: direction.clone(),
         };
-        outlet.carry +=
-          dt *
-          (outlet.kind === "yaw"
+        const emissionRate = (outlet.kind === "yaw"
             ? 380 * Math.sqrt(strength)
             : (outlet.kind === "lift" ? 150 : 240) * Math.sqrt(strength) + strength * 140);
+        outlet.carry += dt * emissionRate;
         const count = Math.floor(outlet.carry);
         outlet.carry -= count;
         for (let j = 0; j < count; j++) {
@@ -212,8 +220,10 @@ export function createExhaust(scene: THREE.Scene) {
           const spread = 1.3 + strength * 0.7;
           p.velocity
             .copy(velocity)
-            .multiplyScalar(0.85)
             .addScaledVector(emissionDirection, 7 + strength * 7);
+          // Gas inherits the full car speed when crossing the atmosphere in either direction.
+          p.carrier.copy(velocity);
+          p.spacing = 1 / emissionRate;
           p.velocity.x += (Math.random() - 0.5) * spread;
           p.velocity.y += (Math.random() - 0.5) * spread;
           p.velocity.z += (Math.random() - 0.5) * spread;
@@ -277,6 +287,7 @@ export function createExhaust(scene: THREE.Scene) {
               .addScaledVector(surfaceNormal, 0.25 + Math.random() * 0.35);
             p.position.y = floor + 0.18;
             p.grounded = true;
+            p.carrier.set(0, 0, 0);
             p.age = 0;
             // Landing mist clears quickly instead of hiding the car after touchdown.
             p.lifetime = 0.55 + Math.random() * 0.35;
@@ -297,23 +308,32 @@ export function createExhaust(scene: THREE.Scene) {
       // Normal alpha blending needs back-to-front order, including overlapping jets.
       // View depth keeps off-axis puffs in order in the close driver camera.
       sorted.sort((a, b) => b.depth - a.depth);
+      cameraRight.set(1, 0, 0).applyQuaternion(camera.quaternion);
+      cameraUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
       sorted.forEach((p, i) => {
         const age = p.age / p.lifetime;
         transform.position.copy(p.position);
         transform.quaternion.copy(camera.quaternion);
-        transform.rotateZ(p.seed + age * 0.7);
-        transform.scale.setScalar(
-          p.size + (p.grounded ? age * 3.2 : age * 1.4 + age * age * 0.8),
-        );
+        const size = p.size + (p.grounded ? age * 3.2 : age * 1.4 + age * age * 0.8);
+        // Overlap stretched samples during acceleration and braking, instead of a dotted trail.
+        relativeVelocity.copy(p.velocity).sub(velocity);
+        const x = relativeVelocity.dot(cameraRight), y = relativeVelocity.dot(cameraUp);
+        const stretch = p.grounded ? 0 : Math.min(24, Math.hypot(x, y) * p.spacing * 2.4);
+        transform.rotateZ(stretch > .1 ? Math.atan2(y, x) : p.seed + age * .7);
+        transform.scale.set(size + stretch, size, 1);
         transform.updateMatrix();
         mesh.setMatrixAt(i, transform.matrix);
-        life.setX(i, age);
+        // Stretch spreads the same gas across more pixels, keeping braking trails wispy.
+        const visualAge = 1 - (1 - age) * Math.pow(size / (size + stretch), 1 / 1.6);
+        life.setX(i, visualAge);
         seeds.setX(i, p.seed);
         groundMist.setX(i, Number(p.grounded));
       });
       mesh.count = sorted.length;
       mesh.instanceMatrix.needsUpdate = true;
       life.needsUpdate = seeds.needsUpdate = groundMist.needsUpdate = true;
+      // Condensation fades continuously in thin air; no sudden space boundary switch.
+      material.uniforms.density.value = .04 + .96 * Math.sqrt(Math.max(0, airDensity));
       material.uniforms.light.value = night ? 0.6 : 1;
       material.uniforms.nearPlane.value = camera.near;
     },

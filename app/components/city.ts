@@ -100,13 +100,13 @@ export function buildCity(index: number, column: number, windows: THREE.Texture)
   ground.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   ground.computeVertexNormals();
   group.add(new THREE.Mesh(ground, new THREE.MeshStandardMaterial({ color: "#121e29", roughness: 0.7 })));
-  // The boulevard keeps its lamps; side streets remain visible from the air.
+  // Lamp poles and arms stop the car at their visible edges; side streets remain visible from the air.
   if (column === 0 || column === -1) {
     const side = column === 0 ? 1 : -1;
     for (let t = start + 12; t < start + 160; t += 32) {
-      box(1, t, side * 16, 5.5, 0.18, 11, 0.18);
-      box(1, t, side * 14.5, 11, 3.2, 0.16, 0.22);
-      box(4, t, side * 13.3, 10.9, 1.3, 0.1, 0.5);
+      box(1, t, side * 16, 5.5, 0.18, 11, 0.18, true);
+      box(1, t, side * 14.5, 11, 3.2, 0.16, 0.22, true);
+      box(4, t, side * 13.3, 10.9, 1.3, 0.1, 0.5, true);
     }
   }
   group.userData.solids = solids;
@@ -143,10 +143,11 @@ export function buildCityHorizon(row: number, column: number, windows: THREE.Tex
   }), matrices.length);
   matrices.forEach((matrix, i) => towers.setMatrixAt(i, matrix));
   group.add(towers);
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000),
+  // A low, wide base hides district edges when looking down from above the skyline.
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(120000, 120000),
     new THREE.MeshStandardMaterial({ color: "#111e29", roughness: 1 }));
   ground.rotation.x = -Math.PI / 2;
-  ground.position.set(center(row * 160) + column * 208, 0, -row * 160);
+  ground.position.set(center(row * 160) + column * 208, -30, -row * 160);
   group.add(ground);
   return group;
 }

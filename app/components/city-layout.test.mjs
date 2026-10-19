@@ -67,3 +67,11 @@ test("forest gap clearance follows the direction of the car", () => {
   const car = { heading: Math.PI / 2, halfWidth: 1.3, halfLength: 2.5 };
   assert.equal(sweepScenery({ x: -10, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }, trunks, 2.85, 1.8, car).hit, false);
 });
+
+// Thin lamp poles must block a fast car without blocking a clear neighbouring lane.
+test("street-light-sized poles stop swept car motion", () => {
+  const pole={x:0,y:5.5,z:0,w:.18,h:11,d:.18};
+  const car={heading:0,halfWidth:1.3,halfLength:2.5};
+  assert.equal(sweepScenery({x:0,y:0,z:5},{x:0,y:0,z:-5},[pole],2.85,1.8,car).hit,true);
+  assert.equal(sweepScenery({x:3,y:0,z:5},{x:3,y:0,z:-5},[pole],2.85,1.8,car).hit,false);
+});

@@ -2,14 +2,14 @@ import * as THREE from "three";
 import type { GasOutlet } from "./exhaust";
 
 /** Original model shaped from the supplied Roadster rear-view reference. */
-export function makeCar() {
+export function makeCar(paint = "#c2c6c8") {
   const car = new THREE.Group();
   car.rotation.order = "YXZ";
   const outlets: GasOutlet[] = [];
   const wheels: THREE.Group[] = [];
   const frontWheels: THREE.Group[] = [];
   const silver = new THREE.MeshPhysicalMaterial({
-    color: "#c2c6c8",
+    color: paint,
     metalness: 0.82,
     roughness: 0.23,
     clearcoat: 1,
@@ -129,7 +129,7 @@ export function makeCar() {
     [1.82, 1.08, 0.95],
     [2.25, 1.02, 0.96],
   ];
-  loft(
+  const bodyHull = loft(
     sections.map(([z, w, top]) => {
       const delta = Math.min(Math.abs(z + 1.42), Math.abs(z - 1.35));
       const arch =
@@ -138,6 +138,8 @@ export function makeCar() {
     }),
     silver,
   );
+  // Identify the metal body so atmospheric heating stays attached to its shape.
+  bodyHull.name = "Roadster body";
   box(1.63, 0.13, 3.9, 0, 0.27, 0, carbon);
   loft(
     [

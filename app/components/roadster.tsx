@@ -1,5 +1,6 @@
 "use client";
 
+import { planetBearing } from "./journey";
 import { createDrivingAudio } from "./audio";
 import { bindInputRelease, createHeldInputs } from "./held-inputs";
 import {
@@ -399,10 +400,10 @@ export default function Roadster() {
           title="Scenery & time of day"
           aria-label="Scenery and time of day"
         >
-          {place.title.toLowerCase()}{" "}
+          {(telemetry.altitude >= 100000 || (telemetry.planet && telemetry.planet !== "earth")) ? telemetry.planet ?? "earth" : place.title.toLowerCase()}{" "}
           <span>
             ·{" "}
-            {settings.daytime === "sunset"
+            {(telemetry.planet && telemetry.planet !== "earth") ? (telemetry.altitude < 1 ? "surface" : "flight") : telemetry.altitude >= 100000 ? "space" : settings.daytime === "sunset"
               ? "sunset"
               : settings.daytime === "night"
                 ? "night"
@@ -425,8 +426,12 @@ export default function Roadster() {
               : ""}
         </div>
         <div className="trip">
-          {telemetry.altitude > 0
-            ? `${telemetry.altitude} m above the road`
+          {/* Space altitude stays readable, with climb speed showing the growing thrust. */}
+          {telemetry.altitude >= 1000
+            ? `${(telemetry.altitude / 1000).toFixed(1)} km · ${telemetry.altitude >= 100000 ? `${telemetry.planet ?? "earth"} · space` : `${telemetry.planet ?? "earth"} approach`} · ${telemetry.verticalSpeed ?? 0} m/s`
+            : telemetry.altitude > 0
+            ? `${telemetry.altitude} m above ${telemetry.planet && telemetry.planet !== "earth" ? telemetry.planet : "the road"}`
+            : telemetry.planet && telemetry.planet !== "earth" ? `${telemetry.planet} · surface driving`
             : `${telemetry.distance.toFixed(1)} km of nowhere to be`}
         </div>
         <button
@@ -437,7 +442,7 @@ export default function Roadster() {
           auto cruise <span>{settings.cruise ? "on" : "off"}</span>
         </button>
       </section>
-      {telemetry.surface === "offroad" && (
+      {telemetry.surface === "offroad" && telemetry.altitude < 100 && (
         <button
           className="return-to-road"
           onClick={returnToRoad}
@@ -531,12 +536,59 @@ export default function Roadster() {
           </button>
         </nav>
       </footer>
+      {/* Keep actual altitude progress visible when climb is released or landing begins. */}
+      {(settings.flying || telemetry.altitude > 0) && telemetry.altitude < 100000 && (
+        <section className="launch-progress" aria-label="Climb to visit planets">
+          <span>Hold E / climb · visit planets</span>
+          <progress max={100000} value={Math.min(100000,telemetry.altitude)} aria-label="Altitude needed for planet travel" />
+          <small>{(telemetry.altitude/1000).toFixed(1)} / 100 km · {Math.round(telemetry.altitude/1000)}%</small>
+        </section>
+      )}
+      {/* The road map stays visible during driving, flight, and planet travel. */}
+      {(
+        <nav className="planet-map" aria-label="Road and planet direction map">
+          <span>{telemetry.planet && telemetry.planet !== "earth" ? "no roads · ahead ↑" : `road ${telemetry.roadOffset ?? 0} m · ahead ↑`}</span>
+          <svg viewBox="0 0 120 120" aria-hidden="true"><circle cx="60" cy="60" r="46"/><path d="M60 14V106M14 60H106"/>{(!telemetry.planet || telemetry.planet === "earth") && <path d={telemetry.roadMap} className="map-road" />}<path className="map-car" d="M60 53L55 66L60 63L65 66Z"/></svg>
+          {(["earth","moon","mars"] as const).filter(planet=>telemetry.altitude >= 100000 && planet!==telemetry.planet).map(planet=>{
+            const angle=planetBearing[planet]-(telemetry.heading??0);
+            return <button key={planet} aria-label={`Face ${planet}`} title={`Turn towards ${planet}`} style={{left:`${50+Math.sin(angle)*33}%`,top:`${50-Math.cos(angle)*33}%`}} onClick={()=>update({destination:planet,flying:true})}>{planet[0].toUpperCase()+planet.slice(1)}</button>;
+          })}
+        </nav>
+      )}
+      {/* Select another world in space, then use forward throttle to approach it. */}
+      {(telemetry.landingReady || telemetry.altitude >= 100000 || (telemetry.planet && telemetry.planet !== "earth")) && (
+        <section className="planet-travel" aria-label="Space destinations">
+          <span>{telemetry.destination
+            ? `to ${telemetry.destination} · ${telemetry.travelProgress}% · hold W / Shift`
+            : telemetry.altitude < 1 ? `${telemetry.planet} surface · hold E to leave` : `near ${telemetry.planet ?? "earth"} · E / Q altitude`}</span>
+          <div>
+            {(["earth", "moon", "mars"] as const).map(planet => (
+              <button key={planet} aria-pressed={telemetry.destination === planet || (!telemetry.destination && telemetry.planet === planet)}
+                disabled={telemetry.altitude < 100000 || telemetry.planet === planet}
+                onClick={() => { update({ destination: planet, flying: true }); notify(`Turn towards ${planet}. Hold W or Shift to approach. Arrival approaches directly and lands automatically. E or Q cancels landing.`); }}>
+                {planet}
+              </button>
+            ))}
+          </div>
+          {/* Landing follows the same ground contact and driving controls as Earth. */}
+          {(telemetry.planet !== "earth" || telemetry.landingReady) && !telemetry.destination && (
+            <button className={`space-return ${telemetry.landingReady ? "landing-ready" : ""}`} onClick={() => {
+              update({ flying: false, cruise: false });
+              notify(`Landing on ${telemetry.planet}. Use W A S D to drive after touchdown.`);
+            }} disabled={telemetry.altitude < .1}>
+              {telemetry.altitude < .1 ? "Surface driving · WASD" : "Press Space · landing assist"}
+            </button>
+          )}
+          <button className="space-return" onClick={returnToRoad}>Back to Earth road · B</button>
+        </section>
+      )}
       {settings.flying && (
         <div
           className="altitude-controls"
           aria-label="Flight altitude controls"
         >
-          <span>altitude</span>
+          {/* Holding climb builds speed all the way into space. */}
+          <span>{telemetry.altitude >= 100000 ? "W / Shift approaches · E / Q altitude" : "hold climb to reach space"}</span>
           {[
             ["q", "descend"],
             ["e", "climb"],
@@ -751,7 +803,7 @@ export default function Roadster() {
                   Keep holding Brake / reverse after stopping to back up.
                   Hold Boost for extra speed. You can steer and use a pedal at
                   the same time. Tap lift off to fly, then hold climb or descend
-                  to change altitude. Auto cruise keeps you moving hands-free.
+                  to change altitude. Hold climb to build speed gradually into space. Turn with A/D to face a planet, or choose its button to turn towards it. Hold W, Shift or Go to travel. Arrival approaches directly and lands automatically. E or Q cancels landing; W then flies level. E and Q control altitude. Land on Moon or Mars to drive across the surface. B returns to Earth. Auto cruise keeps you moving hands-free.
                 </div>
                 <div className="controls-list">
                   {[
@@ -762,7 +814,7 @@ export default function Roadster() {
                     ["SPACE", "Lift off / assisted landing"],
                     ["SHIFT", "Cold-gas boost"],
                     ["X", "Lift off & thruster roll"],
-                    ["E / Q", "Climb / descend without a height cap"],
+                    ["E / Q", "Hold climb to accelerate into space"],
                     ["P", "Pause / resume"],
                     ["B", "Return to the road"],
                     ["R", "Reset journey"],
@@ -790,6 +842,10 @@ export default function Roadster() {
                     rel="noreferrer"
                   >
                     Watch Tesla’s original demonstration ↗
+                  </a>
+                  {/* Credit the photographic planet maps used during space flight. */}
+                  <a href="https://www.solarsystemscope.com/textures/" target="_blank" rel="noreferrer">
+                    Earth maps: Solar System Scope · CC BY 4.0
                   </a>
                   <span>
                     Independent fan experience · Inspired by Slow Roads · Not

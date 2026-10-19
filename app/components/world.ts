@@ -1,7 +1,12 @@
 import * as THREE from "three";
+import { createPlasma } from "./plasma";
+import { createTraffic } from "./traffic";
+import { ascentBlur, flightHeat, makeAscentPass } from "./ascent";
+import { destinationPosition, advanceJourney, approachPlanet, canApproachPlanet, planetBearing, type Journey, type Planet } from "./journey";
+import { createPlanetSurface, planetHeight } from "./planet-surface";
 import { makeCar, steerFrontWheels } from "./car";
 import { pedalSpeed, slowDown, steeringRate, chaseDistance } from "./driving";
-import { airTurn, verticalFlight } from "./flight";
+import { airTurn, verticalFlight, escapeFlight } from "./flight";
 import {
   center,
   elevation,
@@ -38,6 +43,16 @@ export type Telemetry = {
   speed: number;
   distance: number;
   altitude: number;
+  verticalSpeed?: number;
+  planet?: Planet;
+  destination?: Planet | null;
+  travelProgress?: number;
+  landingReady?: boolean;
+  climbHeld?: number;
+  heading?: number;
+  // Road coordinates let the map follow the actual road even while flying.
+  roadMap?: string;
+  roadOffset?: number;
   charge: number;
   // Show reverse separately so speed and motor sound stay positive.
   reversing?: boolean;
@@ -58,6 +73,7 @@ export type Controls = {
   reset: number;
   recover: number;
   chargeLocked?: boolean;
+  destination?: Planet;
   flip: number;
 };
 // Ground colours support lush coastal foliage and a darker urban boulevard.
@@ -115,6 +131,10 @@ export function createWorld(
   report: (data: Telemetry) => void,
 ) {
   const scene = new THREE.Scene();
+  const traffic = createTraffic(scene);
+  // All tyres, camera clearance, and exhaust use the active world's ground.
+  const worldSurface = (t: number, x: number, env: Environment) => journey.planet === "earth"
+    ? drivingSurface(t, x, env) : planetHeight(x, -t, journey.planet);
   const renderer = new THREE.WebGLRenderer({
     antialias: true,
     alpha: false,
@@ -167,6 +187,10 @@ export function createWorld(
   composer.addPass(new RenderPass(scene, camera));
   const bloom = new UnrealBloomPass(new THREE.Vector2(container.clientWidth, container.clientHeight), 0.24, 0.45, 1.2);
   composer.addPass(bloom);
+  // Ascent blur runs before colour output and fades away above the atmosphere.
+  const ascentPass = makeAscentPass();
+  composer.addPass(ascentPass);
+  const ascentCenter = new THREE.Vector3();
   const outputPass = new OutputPass();
   composer.addPass(outputPass);
   const ambient = new THREE.HemisphereLight("#eff3ed", "#6b7766", 2.5);
@@ -190,6 +214,8 @@ export function createWorld(
     return light;
   });
   const sky = makeSky();
+  // Share orbital textures so the landing ground keeps the same surface colours.
+  const planetSurface = createPlanetSurface(scene, sky.userData.planetMaps);
   scene.add(sky);
   const water = makeOcean();
   water.rotation.x = -Math.PI / 2;
@@ -197,6 +223,7 @@ export function createWorld(
   scene.add(water);
   const { car, outlets, wing, wheels, frontWheels } = makeCar();
   const exhaust = createExhaust(scene);
+  const plasma = createPlasma(car, scene);
   const previousCarPosition = new THREE.Vector3();
   const contactPoint = new THREE.Vector3();
   const groundContacts = [
@@ -264,7 +291,8 @@ export function createWorld(
   let cityHorizon: THREE.Group | null = null;
   // Reuse nearby solid objects for car, roof, and camera contact checks.
   const nearbySolids = (x: number, t: number, reach = 15): CityBox[] => {
-    const boxes: CityBox[] = [];
+    const boxes: CityBox[] = [...traffic.boxes];
+    if (journey.planet !== "earth") return planetSurface.solids.filter(b => Math.abs(b.x-x)<b.w/2+reach && Math.abs(b.z+t)<b.d/2+reach);
     if (environment === "cyber") {
       const row = Math.floor(t / 160), column = Math.floor((x - center(t)) / 208);
       for (let z = row - 1; z <= row + 1; z++)
@@ -278,8 +306,8 @@ export function createWorld(
     return boxes.filter(b => Math.abs(b.x - x) < b.w / 2 + reach && Math.abs(b.z + t) < b.d / 2 + reach);
   };
   const exhaustSurfaceHeight = (x: number, z: number) => {
-    const height = drivingSurface(-z, x, environment);
-    return environment === "coast" ? Math.max(-5, height) : height;
+    const height = worldSurface(-z, x, environment);
+    return journey.planet === "earth" && environment === "coast" ? Math.max(-5, height) : height;
   };
   const disposeGroup = (g: THREE.Object3D) => {
     g.traverse((o) => {
@@ -288,6 +316,8 @@ export function createWorld(
         if (o instanceof THREE.InstancedMesh) o.dispose();
         if (o.userData.ownedTexture instanceof THREE.Texture)
           o.userData.ownedTexture.dispose();
+        // Planet cloud and night maps share the sky's lifetime.
+        o.userData.ownedTextures?.forEach((texture: THREE.Texture) => texture.dispose());
         o.geometry.dispose();
         (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) =>
           m.dispose(),
@@ -427,7 +457,7 @@ export function createWorld(
       const scale = 0.65 + random(seed + 2) * 1.35;
       dummy.position.set(
         center(t) + offset,
-        drivingSurface(t, center(t) + offset, environment) + 1.2 * scale,
+        worldSurface(t, center(t) + offset, environment) + 1.2 * scale,
         -t,
       );
       dummy.scale.set(
@@ -501,6 +531,11 @@ export function createWorld(
       rock.castShadow = true;
       rock.receiveShadow = true;
       group.add(rock);
+      // Match collision bounds to the visible stone, including its full height.
+      rock.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(rock);
+      const rockCenter = bounds.getCenter(new THREE.Vector3()), size = bounds.getSize(new THREE.Vector3());
+      solids.push({x:rockCenter.x,y:rockCenter.y,z:rockCenter.z,w:size.x,h:size.y,d:size.z});
     }
     scene.add(group);
     chunks.set(index, group);
@@ -526,6 +561,10 @@ export function createWorld(
     flightTarget = 7,
     wasFlying = false,
     previousVerticalInput = 0,
+    climbHeld = 0,
+    escapeActive = false,
+    approachActive = false,
+    orbitView = false,
     charge = 100,
     thrust = 0,
     last = performance.now(),
@@ -534,6 +573,11 @@ export function createWorld(
     recover = controls.recover,
     frame = 0,
     stopped = false;
+  // Each world remains available after arrival; B and reset return straight to Earth.
+  // Button guidance releases once aligned, leaving manual steering free.
+  let autoAim: Planet | null = null;
+  let cometAnchored = false;
+  let journey: Journey = { planet: "earth", destination: null, progress: 0 };
   const resize = () => {
     camera.aspect = container.clientWidth / container.clientHeight;
     camera.updateProjectionMatrix();
@@ -545,7 +589,9 @@ export function createWorld(
   function animate(now: number) {
     if (stopped) return;
     frame = requestAnimationFrame(animate);
-    const dt = Math.min((now - last) / 1000, 0.05);
+    // Climb tracks elapsed time even on slower screens; its physics uses small internal steps.
+    const climbDt = Math.min((now - last) / 1000, 0.25);
+    const dt = Math.min(climbDt, 0.05);
     last = now;
     if (controls.reset !== reset) {
       exhaust.clear();
@@ -570,6 +616,14 @@ export function createWorld(
       flightTarget = 7;
       wasFlying = false;
       previousVerticalInput = 0;
+      climbHeld = 0;
+      escapeActive = false;
+      approachActive = false;
+      orbitView = false;
+      journey = { planet: "earth", destination: null, progress: 0 };
+      // Returning home restores Earth's haze instead of keeping the planet's dust colour.
+      daytime = undefined;
+      controls.destination = undefined;
       charge = 100;
       reset = controls.reset;
     }
@@ -591,6 +645,14 @@ export function createWorld(
       flightTarget = 7;
       wasFlying = false;
       previousVerticalInput = 0;
+      climbHeld = 0;
+      escapeActive = false;
+      approachActive = false;
+      orbitView = false;
+      journey = { planet: "earth", destination: null, progress: 0 };
+      // Returning home restores Earth's haze instead of keeping the planet's dust colour.
+      daytime = undefined;
+      controls.destination = undefined;
       controls.flying = controls.boost = boosting = false;
       controls.keys.clear();
       thrust = 0;
@@ -634,8 +696,11 @@ export function createWorld(
     const sunDirection = new THREE.Vector3(
       -0.48,
       sunset ? 0.065 : night ? 0.2 : 0.5,
-      -1,
+      journey.planet === "earth" && !orbitView ? -1 : 1,
     ).normalize();
+    // Space keeps one light direction across departures and arrivals.
+    sunDirection.lerp(new THREE.Vector3(-.48, .3, 1).normalize(),
+      THREE.MathUtils.smoothstep(altitude, 3500, 100000)).normalize();
     skyMat.uniforms.sunDirection.value.copy(sunDirection);
     waterMat.uniforms.sunDirection.value.copy(sunDirection);
     waterMat.uniforms.time.value = now / 1000;
@@ -669,12 +734,16 @@ export function createWorld(
       light.position.set(center(t) + (i % 2 ? 13.3 : -13.3), elevation(t) + 10.7, -t);
       light.visible = night && environment === "cyber";
     });
+    // Move traffic first so player collisions use the same positions shown on screen.
+    traffic.update(distance, carX, controls.paused ? 0 : dt, environment,
+      journey.planet === "earth" && altitude < 180,
+      surfaceY + altitude + groundLift + .015, heading);
     if (!controls.paused) {
       const previousBaseY = surfaceY + altitude + groundLift + 0.015;
       let previousX = carX;
       let previousDistance = distance;
       const k = controls.keys;
-      const accelerating = k.has("w") || k.has("arrowup");
+      const accelerating = k.has("w") || k.has("arrowup") || ((altitude > 10000 || journey.planet !== "earth" || orbitView) && k.has("shift"));
       const reversing = k.has("s") || k.has("arrowdown");
       // Reverse overrides boost and cruise; W first brakes any backward movement.
       boosting = !reversing && speed >= 0 && (k.has("shift") || controls.boost) && charge > 1;
@@ -688,7 +757,7 @@ export function createWorld(
       const steering =
         (k.has("a") || k.has("arrowleft") ? 1 : 0) -
         (k.has("d") || k.has("arrowright") ? 1 : 0);
-      const roadHeading = Math.atan2(
+      const roadHeading = journey.planet !== "earth" ? heading : Math.atan2(
         center(distance + 2) - center(distance - 2),
         4,
       );
@@ -696,6 +765,10 @@ export function createWorld(
       const inAir = controls.flying || altitude > 0.3;
       if (steering) controls.cruise = false;
       if (inAir) {
+        // Arrival holds its heading and slows for a direct touchdown; altitude keys cancel it.
+        if (approachActive && !k.has("e") && !k.has("q")) {
+          speed = THREE.MathUtils.damp(speed, Math.min(240, 20 + altitude * .12), 2, dt);
+        }
         // Manual and cruise turns share the same nozzle torque and air resistance.
         const headingError = Math.atan2(Math.sin(roadHeading - heading), Math.cos(roadHeading - heading));
         const targetRate = controls.cruise && !steering
@@ -707,7 +780,7 @@ export function createWorld(
         heading += airYawRate * dt;
       } else if (controls.cruise && !steering) {
         heading = THREE.MathUtils.damp(heading, roadHeading, 2.5, dt);
-        carX = THREE.MathUtils.damp(carX, center(distance) + CRUISE_LANE, 1.7, dt);
+        if (journey.planet === "earth") carX = THREE.MathUtils.damp(carX, center(distance) + CRUISE_LANE, 1.7, dt);
         airYawRate = yawThrust = 0;
       } else {
         airYawRate = yawThrust = 0;
@@ -735,7 +808,7 @@ export function createWorld(
         dt,
       );
       steerFrontWheels(frontWheels, wheelSteering);
-      const offroad = Math.abs(lane) > ROAD_HALF_WIDTH;
+      const offroad = journey.planet === "earth" && Math.abs(lane) > ROAD_HALF_WIDTH;
       // Rough ground slows both forward and reverse movement without changing gear.
       if (offroad && altitude < 0.3)
         speed = slowDown(speed, dt * (3 + Math.abs(speed) * 0.09));
@@ -746,7 +819,7 @@ export function createWorld(
       traveled += Math.abs(advance);
       lane = carX - center(distance);
       const previousGround = surfaceY;
-      surfaceY = drivingSurface(distance, carX, environment);
+      surfaceY = worldSurface(distance, carX, environment);
       if (altitude > 0.01) {
         const change = previousGround - surfaceY;
         altitude += change;
@@ -754,8 +827,8 @@ export function createWorld(
       }
       // The ocean and the outer generated boundary return the car to solid ground.
       if (
-        (environment === "coast" && surfaceY < -4 && altitude < 0.2) ||
-        (environment === "coast" && Math.abs(lane) > 1200)
+        journey.planet === "earth" && ((environment === "coast" && surfaceY < -4 && altitude < 0.2) ||
+        (environment === "coast" && Math.abs(lane) > 1200))
       ) {
         lane = CRUISE_LANE;
         carX = center(distance) + lane;
@@ -788,15 +861,23 @@ export function createWorld(
           flipRoll = 0;
         }
       }
-      if (controls.flying && !wasFlying) flightTarget = Math.max(7, altitude);
+      if (controls.flying && !wasFlying) {
+        flightTarget = Math.max(7, altitude);
+        approachActive = false;
+      }
+      // Only arrival starts a landing circuit; W alone always keeps the chosen altitude.
+      if (k.has("e") || k.has("q") || !controls.flying) approachActive = false;
       if (controls.flying) {
         const verticalInput = (k.has("e") ? 1 : 0) - (k.has("q") ? 1 : 0);
         if (verticalInput !== previousVerticalInput)
           flightTarget = Math.max(0, altitude + verticalSpeed * 0.4);
         if (verticalInput)
           flightTarget = Math.max(0, altitude + verticalInput * 22);
+        if (verticalInput) escapeActive = true;
         previousVerticalInput = verticalInput;
       }
+      // Landing clears the launch ramp so the next lift-off starts gently.
+      if (!controls.flying) { climbHeld = 0; previousVerticalInput = 0; escapeActive = false; }
       wasFlying = controls.flying;
       // Landing assist measures clearance above roofs too, so supported cars stop their lift jets.
       let landingSurface = surfaceY;
@@ -809,14 +890,66 @@ export function createWorld(
       const supportHeight = landingSurface - surfaceY;
       const clearance = Math.max(0, altitude - supportHeight);
       if (controls.flying || clearance > 0.01) {
-        const vertical = verticalFlight(clearance, verticalSpeed,
-          Math.max(0, flightTarget - supportHeight), controls.flying, dt);
+        // Sustained flight can leave Earth; assisted landing also returns quickly from space.
+        const escaping = (controls.flying && escapeActive) || clearance > 400;
+        const vertical = (approachActive || (!controls.flying && clearance > 20))
+          ? approachPlanet(clearance, verticalSpeed, true, dt)
+          : escaping
+          ? escapeFlight(clearance, verticalSpeed, controls.flying ? previousVerticalInput : -1, climbHeld, dt)
+          : verticalFlight(clearance, verticalSpeed,
+            Math.max(0, flightTarget - supportHeight), controls.flying, dt);
+        climbHeld = "held" in vertical ? Number(vertical.held) : 0;
         altitude = supportHeight + vertical.height;
         verticalSpeed = vertical.velocity;
         thrust = vertical.thrust;
+        if (approachActive && vertical.height === 0) {
+          controls.flying = false;
+          approachActive = false;
+          wasFlying = false;
+          if (journey.planet === "earth") orbitView = false;
+        }
       } else {
         altitude = supportHeight;
         verticalSpeed = thrust = 0;
+      }
+      // Forward throttle moves towards the chosen world; climbing alone never swaps planets.
+      if (altitude >= 100000 || journey.destination) {
+        const previousPlanet = journey.planet;
+        const startingJourney = !journey.destination && controls.destination && controls.destination !== journey.planet;
+        // Buttons turn towards a world; manual steering can find another world too.
+        if (controls.destination && controls.destination !== journey.destination) autoAim = controls.destination;
+        if (startingJourney) approachActive = false;
+        const selected = controls.destination ?? journey.destination;
+        if (k.has("a") || k.has("d") || k.has("arrowleft") || k.has("arrowright")) autoAim = null;
+        if (selected && autoAim) {
+          const turn = Math.atan2(Math.sin(planetBearing[selected]-heading), Math.cos(planetBearing[selected]-heading));
+          heading += turn * (1-Math.exp(-dt*2));
+          if (Math.abs(turn)<.015) autoAim=null;
+        }
+        // Arrival keeps its destination until touchdown or an explicit altitude change.
+        if (!approachActive && !autoAim && accelerating) {
+          const facing = (Object.keys(planetBearing) as Planet[]).find(p => p !== journey.planet && Math.abs(Math.atan2(Math.sin(planetBearing[p]-heading), Math.cos(planetBearing[p]-heading))) < .18);
+          if (facing && facing !== selected) { controls.destination = facing; approachActive = false; }
+        }
+        const aimed = controls.destination ?? journey.destination;
+        // Approach the visible planet edge too, instead of stopping outside a narrow centre line.
+        const aligned = !aimed || canApproachPlanet(aimed, heading, aimed === journey.destination ? journey.progress : 0);
+        journey = advanceJourney(journey, controls.destination, accelerating && !reversing && aligned, dt);
+        if (journey.planet !== previousPlanet) {
+          daytime = undefined;
+          // Continue the incoming descent through the world switch without stopping.
+          altitude = 180000;
+          verticalSpeed = -12000;
+          approachActive = true;
+          orbitView = true;
+          climbHeld = 0;
+          exhaust.clear();
+          hasCarPosition = false;
+          // Face the arrival world so its illuminated surface is visible straight away.
+          heading = planetBearing[journey.planet];
+          chaseHeading = heading;
+        }
+        if (!journey.destination) controls.destination = undefined;
       }
       const contact = resolveGuardrail(
         {
@@ -833,12 +966,12 @@ export function createWorld(
         center,
         elevation,
       );
-      if (contact.hit) {
+      if (contact.hit && journey.planet === "earth") {
         carX = contact.x;
         heading = contact.heading;
         speed = contact.speed;
         lane = carX - center(distance);
-        const correctedGround = drivingSurface(distance, carX, environment);
+        const correctedGround = worldSurface(distance, carX, environment);
         if (altitude > 0.01) {
           const change = surfaceY - correctedGround;
           altitude = Math.max(0, altitude + change);
@@ -859,7 +992,7 @@ export function createWorld(
         carX = sceneryContact.x;
         distance = -sceneryContact.z;
         lane = carX - center(distance);
-        surfaceY = drivingSurface(distance, carX, environment);
+        surfaceY = worldSurface(distance, carX, environment);
         altitude = Math.max(0, sceneryContact.y - surfaceY - groundLift - 0.015);
         if (sceneryContact.axis === "y") {
           verticalSpeed = 0;
@@ -870,7 +1003,7 @@ export function createWorld(
         }
       }
       const sampleGround = (t: number, x: number) =>
-        drivingSurface(t, x, environment);
+        worldSurface(t, x, environment);
       const forwardGround = sampleGround(
         distance + Math.cos(heading) * 2,
         carX + Math.sin(heading) * 2,
@@ -879,9 +1012,10 @@ export function createWorld(
         distance - Math.cos(heading) * 2,
         carX - Math.sin(heading) * 2,
       );
+      // Keep hovering level; approach gently lowers the nose instead of pitching upwards.
       car.rotation.x = THREE.MathUtils.damp(
         car.rotation.x,
-        altitude > 0.3 ? -0.06 : Math.atan2(forwardGround - backwardGround, 4),
+        altitude > 0.3 ? (approachActive ? -Math.min(.18, Math.abs(verticalSpeed) / 18000) : 0) : Math.atan2(forwardGround - backwardGround, 4),
         5,
         dt,
       );
@@ -986,9 +1120,9 @@ export function createWorld(
     // Follow the road slope and car direction so the soft shadow does not cut into the surface.
     shadow.position.set(car.position.x, surfaceY + 0.06, -distance);
     shadowNormal.set(
-      drivingSurface(distance, carX - 0.5, environment) - drivingSurface(distance, carX + 0.5, environment),
+      worldSurface(distance, carX - 0.5, environment) - worldSurface(distance, carX + 0.5, environment),
       1,
-      drivingSurface(distance + 0.5, carX, environment) - drivingSurface(distance - 0.5, carX, environment),
+      worldSurface(distance + 0.5, carX, environment) - worldSurface(distance - 0.5, carX, environment),
     ).normalize();
     shadow.quaternion.setFromUnitVectors(shadowAxis, shadowNormal);
     shadow.rotateZ(heading);
@@ -1015,7 +1149,7 @@ export function createWorld(
       nearbySolids(car.position.x, distance, behind + 5), 0.35, 0.35,
     );
     if (cameraContact.hit) target.set(cameraContact.x, cameraContact.y, cameraContact.z);
-    const cameraGround = drivingSurface(-target.z, target.x, environment);
+    const cameraGround = worldSurface(-target.z, target.x, environment);
     target.y = Math.max(target.y, cameraGround + 1.5);
     // Apply collision clearance after following, so smoothing cannot move the view through walls.
     camera.position.copy(target);
@@ -1037,7 +1171,7 @@ export function createWorld(
       Math.max(
         car.position.y + chaseLookHeight,
         altitude < 0.3
-          ? drivingSurface(
+          ? worldSurface(
               distance + Math.cos(heading) * lookAhead,
               car.position.x + Math.sin(heading) * lookAhead,
               environment,
@@ -1048,20 +1182,96 @@ export function createWorld(
     );
     camera.fov = THREE.MathUtils.damp(
       camera.fov,
-      portrait ? 57 : 44,
+      (portrait ? 57 : 44) + ascentBlur(altitude, verticalSpeed, Math.abs(verticalSpeed) > 250) * 5,
       2,
       dt,
     );
     // More depth precision at altitude prevents distant asphalt and paint from flickering.
     camera.near = Math.min(2, 0.5 + altitude * 0.004);
+    // On narrow screens the car sits above the thumb controls, keeping its view clear.
+    if (portrait) camera.setViewOffset(container.clientWidth, container.clientHeight,
+      0, container.clientHeight * .12, container.clientWidth, container.clientHeight);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     sky.position.copy(camera.position);
+    // Thin air removes haze and ambient fill while direct sunlight stays sharp.
+    const spaceBlend = journey.planet === "earth" ? THREE.MathUtils.smoothstep(altitude, 3000, 100000) : 1;
+    skyMat.uniforms.altitude.value = altitude;
+    skyMat.uniforms.orbitView.value = orbitView ? 1 : 0;
+    skyMat.uniforms.planet.value = ["earth", "moon", "mars"].indexOf(journey.planet);
+    skyMat.uniforms.earthMap.value = sky.userData.planetMaps[journey.planet];
+    skyMat.uniforms.destination.value = journey.destination ? ["earth", "moon", "mars"].indexOf(journey.destination) : -1;
+    skyMat.uniforms.destinationMap.value = sky.userData.planetMaps[journey.destination ?? journey.planet];
+    skyMat.uniforms.travel.value = journey.progress;
+    // The same tested route controls every frame, including the final frame before landing.
+    skyMat.uniforms.targetPosition.value.fromArray(destinationPosition(journey.destination ?? journey.planet, journey.progress));
+    // Keep the landing bearing fixed so the planet cannot circle around the car.
+    skyMat.uniforms.bearing.value = orbitView ? planetBearing[journey.planet] : 0;
+    // Show a comet near the launch bearing, then keep it fixed while the player turns.
+    if (altitude > 80000 && !cometAnchored) {
+      skyMat.uniforms.cometBearing.value = heading + .13;
+      cometAnchored = true;
+    }
+    if (altitude < 80000) cometAnchored = false;
+    // The far horizon must remain visible when approaching an airless surface.
+    camera.far = journey.planet === "earth" ? Math.max(16000, altitude * 2 + 16000) : Math.max(180000, Math.sqrt(2 * 3390000 * (altitude + 10)) * 2);
+    camera.updateProjectionMatrix();
+    skyMat.uniforms.cameraXZ.value.set(carX, -distance);
+    if (scene.fog instanceof THREE.FogExp2)
+      scene.fog.density = (environment === "cyber" ? 0.0024 : 0.0012)
+        * (1 + THREE.MathUtils.smoothstep(altitude, 120, 900) * .45) * (1 - spaceBlend);
+    ambient.intensity *= 1 - spaceBlend * 0.94;
+    scene.environmentIntensity *= 1 - spaceBlend * 0.9;
+    sun.intensity = THREE.MathUtils.lerp(sun.intensity, 3.5, spaceBlend);
+    sun.color.lerp(new THREE.Color("#ffffff"), spaceBlend);
+    // Keep the actual road and buildings visible from above until the globe takes over.
+    // Both views crossfade across the same altitude band, preserving aerial surface detail.
+    const groundOpacity = 1 - THREE.MathUtils.smoothstep(altitude, 12000, 60000);
+    const fadeGround = (group: THREE.Object3D) => {
+      if (group.userData.groundOpacity === groundOpacity) return;
+      group.userData.groundOpacity = groundOpacity;
+      group.traverse(object => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const materials = Array.isArray(object.material) ? object.material : [object.material];
+      materials.forEach((material: THREE.Material) => {
+        material.userData.baseOpacity ??= material.opacity;
+        material.userData.baseTransparent ??= material.transparent;
+        material.opacity = material.userData.baseOpacity * groundOpacity;
+        if (material instanceof THREE.MeshStandardMaterial) {
+          material.userData.baseEmission ??= material.emissiveIntensity;
+          material.emissiveIntensity = material.userData.baseEmission * (1 - THREE.MathUtils.smoothstep(altitude, 100, 800) * .35);
+        }
+        const transparent = groundOpacity < 1 || material.userData.baseTransparent;
+        if (material.transparent !== transparent) { material.transparent = transparent; material.needsUpdate = true; }
+      });
+    });
+    };
+    if (journey.planet === "earth" && altitude < 60000) {
+      chunks.forEach(fadeGround);
+      districts.forEach(fadeGround);
+      if (cityHorizon) fadeGround(cityHorizon);
+    }
+    // Earth buildings fade into haze before the distant globe takes over.
+    const earthGround = journey.planet === "earth" && altitude < 60000;
+    chunks.forEach(group => { group.visible = earthGround; });
+    districts.forEach(group => { group.visible = earthGround; });
+    if (cityHorizon) cityHorizon.visible = earthGround;
+    planetSurface.update(carX, -distance, journey.planet, altitude);
+    if (journey.planet !== "earth") {
+      ambient.intensity = .38;
+      sun.castShadow = altitude < 2000;
+      streetLights.forEach(light => { light.visible = false; });
+      if (scene.fog instanceof THREE.FogExp2) {
+        scene.fog.color.set(journey.planet === "mars" ? "#9f6a4d" : "#11151b");
+        scene.fog.density = (journey.planet === "moon" ? 0 : .000015) * (1 - THREE.MathUtils.smoothstep(altitude, 500, 3500));
+      }
+    }
     sun.position
       .copy(car.position)
-      .add(new THREE.Vector3(-95, sunset ? 38 : 140, -180));
+      .addScaledVector(sunDirection, 220);
     sun.target.position.copy(car.position);
     water.position.z = -distance;
-    water.visible = environment === "coast";
+    water.visible = journey.planet === "earth" && environment === "coast" && altitude < 60000;
     if (hasCarPosition && dt > 0 && !controls.paused)
       exhaustVelocity
         .copy(car.position)
@@ -1082,9 +1292,22 @@ export function createWorld(
       yawThrust,
       night,
       exhaustSurfaceHeight,
+      journey.planet === "earth" ? Math.exp(-altitude / 16000) : journey.planet === "mars" ? .02*Math.exp(-altitude/22000) : 0,
     );
-    // Only the neon city needs bloom; the coast keeps crisp natural daylight.
-    if (environment === "cyber") composer.render();
+    // Match the blur to the actual climb and remove it immediately when paused.
+    const travelBlur = journey.destination && (controls.keys.has("w") || controls.keys.has("arrowup")) ? .12 : 0;
+    const blurTarget = controls.paused ? 0 : Math.max(travelBlur, ascentBlur(altitude, verticalSpeed, Math.abs(verticalSpeed) > 250));
+    ascentPass.uniforms.time.value = now / 1000;
+    plasma.update(controls.paused ? 0 : flightHeat(altitude, verticalSpeed, journey.planet), now/1000, verticalSpeed, controls.paused ? 0 : dt, exhaustVelocity);
+    ascentPass.uniforms.strength.value = controls.paused ? 0
+      : THREE.MathUtils.damp(ascentPass.uniforms.strength.value, blurTarget, 6, dt);
+    ascentCenter.copy(car.position).add(new THREE.Vector3(0, .7, 0)).project(camera);
+    ascentPass.uniforms.center.value.set(ascentCenter.x * .5 + .5, ascentCenter.y * .5 + .5);
+    ascentPass.uniforms.aspect.value = camera.aspect;
+    ascentPass.enabled = ascentPass.uniforms.strength.value > .001;
+    bloom.enabled = environment === "cyber" || spaceBlend > .1;
+    bloom.strength = THREE.MathUtils.lerp(.24, .12, spaceBlend);
+    if (environment === "cyber" || ascentPass.enabled || spaceBlend > .1) composer.render();
     else renderer.render(scene, camera);
     if (now - lastReport > 100) {
       report({
@@ -1093,6 +1316,20 @@ export function createWorld(
         reversing: speed < -0.1,
         distance: traveled / 1000,
         altitude: Math.round(altitude),
+        verticalSpeed: Math.round(verticalSpeed),
+        climbHeld, heading,
+        // Rotate nearby road samples into the car's forward view; zoom out when off-road.
+        roadOffset: Math.round(Math.abs(carX-center(distance))),
+        roadMap: Array.from({length:61}, (_,i) => {
+          const scale = Math.max(3, Math.abs(carX-center(distance))/35);
+          const t=distance+(i-30)*scale*3;
+          const dx=center(t)-carX, dz=t-distance;
+          return `${i ? "L" : "M"}${(60+(dx*Math.cos(heading)-dz*Math.sin(heading))/scale).toFixed(1)},${(60-(dx*Math.sin(heading)+dz*Math.cos(heading))/scale).toFixed(1)}`;
+        }).join(" "),
+        landingReady: controls.flying && !journey.destination && altitude > 1 && altitude < 45000 && (journey.planet !== "earth" || orbitView),
+        planet: journey.planet,
+        destination: journey.destination,
+        travelProgress: Math.round(journey.progress * 100),
         charge: Math.round(charge),
         flying: controls.flying,
         thrust: controls.paused
@@ -1104,7 +1341,7 @@ export function createWorld(
             ),
         boosting: !controls.paused && boosting,
         flipping: flipTime >= 0,
-        surface: Math.abs(lane) > ROAD_HALF_WIDTH ? "offroad" : "road",
+        surface: journey.planet === "earth" && Math.abs(lane) > ROAD_HALF_WIDTH ? "offroad" : "road",
       });
       lastReport = now;
     }
@@ -1125,6 +1362,8 @@ export function createWorld(
         if (o instanceof THREE.InstancedMesh) o.dispose();
         if (o.userData.ownedTexture instanceof THREE.Texture)
           o.userData.ownedTexture.dispose();
+        // Planet cloud and night maps share the sky's lifetime.
+        o.userData.ownedTextures?.forEach((texture: THREE.Texture) => texture.dispose());
         o.geometry.dispose();
         (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) =>
           m.dispose(),
@@ -1135,6 +1374,8 @@ export function createWorld(
     composer.dispose();
     bloom.dispose();
     outputPass.dispose();
+    ascentPass.dispose();
+    plasma.dispose();
     broadleafTexture.dispose();
     meadowTexture.dispose();
     grassNormal.dispose();
