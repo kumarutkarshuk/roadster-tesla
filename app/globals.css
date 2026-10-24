@@ -1,1056 +1,246 @@
+/* Quiet colours and shared surfaces keep the road as the main focus. */
 :root {
-  --ink: #eae8e3;
-  --muted: #adb5b2;
-  --line: #ffffff20;
+  --ink: #f0f3f4;
+  --muted: #b0bdc6;
+  --line: #ffffff24;
+  --panel: #101a24ed;
+  --accent: #cce6d9;
   color-scheme: dark;
 }
-* {
-  box-sizing: border-box;
-}
-html,
-body {
-  margin: 0;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
-}
-body {
-  font-family: Arial, Helvetica, sans-serif;
-  color: var(--ink);
-}
-button,
-a {
-  -webkit-tap-highlight-color: transparent;
-}
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+body { font-family: Arial, Helvetica, sans-serif; color: var(--ink); }
+button, a { -webkit-tap-highlight-color: transparent; }
 button {
-  font: inherit;
-  -webkit-user-select: none;
-  user-select: none;
-  -webkit-touch-callout: none;
-  touch-action: manipulation;
-  cursor: pointer;
-  color: inherit;
-  border: 0;
-  background: none;
+  font: inherit; color: inherit; border: 0; background: none; cursor: pointer;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+  touch-action: manipulation; transition: background .18s, border-color .18s, color .18s;
 }
-button:focus-visible,
-a:focus-visible {
-  outline: 1px solid #fff9;
-  outline-offset: 5px;
-}
-button {
-  transition:
-    opacity 0.2s,
-    background 0.2s;
-}
-button:hover {
-  opacity: 1 !important;
-}
-button:disabled {
-  opacity: 0.35 !important;
-  cursor: default;
-}
-a {
-  color: inherit;
-  text-decoration: none;
-}
+a { color: inherit; text-decoration: none; }
+button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+button:disabled { opacity: .4; cursor: default; }
+@media (hover: hover) { button:hover:not(:disabled) { background: #ffffff12; } }
+kbd { font: inherit; font-size: 9px; color: var(--muted); }
 .experience {
-  height: 100dvh;
-  position: relative;
-  overflow: hidden;
-  background: #64788f;
+  --edge: 32px; --left: max(var(--edge), env(safe-area-inset-left));
+  --right: max(var(--edge), env(safe-area-inset-right));
+  --bottom: env(safe-area-inset-bottom, 0px);
+  height: 100dvh; position: relative; overflow: hidden; background: #101a24;
 }
-.world,
-.world canvas,
-.atmosphere {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
+.world, .world canvas, .atmosphere { position: absolute; inset: 0; width: 100%; height: 100%; }
+.atmosphere { pointer-events: none; background: linear-gradient(180deg, #07111b55, transparent 25%, transparent 60%, #07111b99); }
+.glass, .flight-control, .planet-travel, .launch-progress, .planet-map {
+  background: #101a24bd; border: 1px solid var(--line); backdrop-filter: blur(16px);
 }
-.atmosphere {
-  pointer-events: none;
-  background: linear-gradient(
-    180deg,
-    #111b2520,
-    transparent 18%,
-    transparent 70%,
-    #0b141d65
-  );
-}
+
+/* The header and driving data sit at the edges, clear of the car. */
 .minimal-header {
-  position: absolute;
-  top: 34px;
-  left: 36px;
-  right: 36px;
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  text-shadow: 0 1px 12px #0007;
+  position: absolute; top: max(28px, env(safe-area-inset-top)); left: var(--left); right: var(--right);
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  text-shadow: 0 2px 16px #0008;
 }
-.minimal-header h1 {
-  margin: 0;
-  font-size: 22px;
-  font-weight: 300;
-  letter-spacing: 8px;
-}
-.minimal-header h1 span {
-  display: block;
-  font-size: 9px;
-  letter-spacing: 2.2px;
-  margin-top: 10px;
-  opacity: 0.65;
-}
+.minimal-header h1 { margin: 0; font-size: 20px; font-weight: 400; letter-spacing: 6px; }
+.minimal-header h1 span { display: block; font-size: 9px; letter-spacing: 1.8px; margin-top: 8px; color: var(--muted); }
 .location-control {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  font-size: 11px;
-  letter-spacing: 0.8px;
-  padding: 8px 0;
-  opacity: 0.7;
+  display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 14px;
+  font-size: 11px; border: 1px solid var(--line); border-radius: 24px; background: #101a2480;
 }
-.location-control span {
-  opacity: 0.65;
-}
-.minimal-telemetry {
-  position: absolute;
-  left: 38px;
-  bottom: 98px;
-  text-shadow: 0 1px 15px #0008;
-}
-.speed {
-  display: flex;
-  gap: 9px;
-  align-items: baseline;
-}
-.speed strong {
-  font-size: 54px;
-  font-weight: 200;
-  letter-spacing: -2.5px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1;
-}
-.speed > span {
-  font-size: 11px;
-  opacity: 0.6;
-}
-.trip {
-  font-size: 10px;
-  letter-spacing: 0.4px;
-  opacity: 0.6;
-  margin-top: 13px;
-}
-.surface-label {
-  font-size: 10px;
-  letter-spacing: 1px;
-  color: #f2c594;
-  margin-top: 9px;
-}
-.surface-label:empty {
-  display: none;
-}
-.cruise {
-  display: flex;
-  gap: 8px;
-  margin-top: 14px;
-  font-size: 10px;
-  padding: 0;
-  opacity: 0.6;
-  letter-spacing: 0.4px;
-}
-.cruise span {
-  color: #b9cbb8;
-}
+.location-control span { color: var(--muted); }
+.minimal-telemetry { position: absolute; left: var(--left); bottom: calc(100px + var(--bottom)); text-shadow: 0 2px 16px #000a; max-width: 250px; }
+.speed { display: flex; gap: 10px; align-items: baseline; }
+.speed strong { font-size: 56px; font-weight: 300; letter-spacing: -3px; font-variant-numeric: tabular-nums; line-height: 1; }
+.speed > span { font-size: 11px; color: var(--muted); }
+.trip { font-size: 11px; line-height: 1.5; color: var(--muted); margin-top: 12px; }
+.surface-label { font-size: 10px; color: #f2ce9d; margin-top: 8px; }
+.surface-label:empty { display: none; }
+.cruise { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 0; font-size: 11px; }
+.cruise span { color: var(--muted); }
+.cruise.active span { color: var(--accent); }
+
+/* One flight dock grows with altitude controls; its rows cannot overlap. */
 .flight-control {
-  position: absolute;
-  right: 38px;
-  bottom: 99px;
-  width: 150px;
-  text-shadow: 0 1px 15px #0008;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  column-gap: 15px;
+  position: absolute; right: var(--right); bottom: calc(100px + var(--bottom)); width: 216px;
+  display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 12px; border-radius: 18px;
 }
-.flight-control > button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  white-space: nowrap;
-  padding: 7px 0;
-  opacity: 0.7;
+.flight-control > button, .altitude-controls button {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 44px; border-radius: 10px; font-size: 11px; white-space: nowrap;
 }
-.flight-control > button.active {
-  color: #ffcf9e;
-  opacity: 1;
-}
-.flight-control .flip-button {
-  grid-column: 2;
-  grid-row: 1;
-}
-.flight-control kbd {
-  font-family: inherit;
-  font-size: 8px;
-  opacity: 0.5;
-}
-.gas-track {
-  grid-column: 1/-1;
-  height: 2px;
-  background: #fff2;
-  margin: 8px 0 9px;
-}
-.gas-track i {
-  display: block;
-  background: #ede2c6bb;
-  height: 100%;
-  transition: width 0.1s linear;
-}
-.gas-label {
-  grid-column: 1/-1;
-  text-align: right;
-  font-size: 9px;
-  letter-spacing: 0.3px;
-  opacity: 0.5;
-}
+.flight-control > button.active { background: #cce6d918; color: var(--accent); }
+.altitude-controls { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.altitude-controls button { border: 1px solid var(--line); background: #ffffff05; touch-action: none; }
+.altitude-controls button:active { background: #cce6d930; border-color: var(--accent); }
+.gas-track { grid-column: 1 / -1; height: 3px; overflow: hidden; border-radius: 4px; background: #ffffff1c; }
+.gas-track i { display: block; background: var(--accent); height: 100%; transition: width .1s linear; }
+.gas-label { grid-column: 1 / -1; font-size: 10px; color: var(--muted); text-align: right; overflow-wrap: anywhere; }
 .minimal-footer {
-  position: absolute;
-  left: 38px;
-  right: 33px;
-  bottom: 29px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-.minimal-footer nav {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-}
-.minimal-footer nav button {
-  padding: 8px;
-  opacity: 0.55;
-  display: flex;
-}
-.minimal-footer nav button svg {
-  width: 18px;
-  height: 18px;
-}
-.key-guide {
-  display: flex;
-  gap: 20px;
-  font-size: 10px;
-  opacity: 0.5;
-  letter-spacing: 0.4px;
-}
-.key-guide i {
-  font-style: normal;
-  opacity: 0.6;
-  margin-left: 5px;
-}
-.glass {
-  background: #15212abb;
-  backdrop-filter: blur(18px);
-  border: 1px solid #ffffff18;
-}
-.eyebrow {
-  font-size: 8px;
-  letter-spacing: 2px;
-  color: #a9b5b4;
-}
-.touch-controls,
-.touch-guide {
-  display: none;
-}
-.loading {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
-  background: #16212b;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 20px;
-  padding: 24px;
-}
-.loading .brand-mark {
-  font-size: 22px;
-  font-weight: 300;
-  letter-spacing: 8px;
-  padding-left: 8px;
-}
-.loading-spinner {
-  width: 28px;
-  height: 28px;
-  border: 2px solid #ffffff20;
-  border-top-color: var(--ink);
-  border-radius: 50%;
-  animation: loading-spin 0.9s linear infinite;
-}
-@keyframes loading-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-.loading p {
-  font-size: 12px;
-  letter-spacing: 1px;
-  max-width: 300px;
-  text-align: center;
-  line-height: 1.8;
-}
-.loading button {
-  text-decoration: underline;
-}
-.modal-backdrop {
-  position: absolute;
-  inset: 0;
-  background: #1d352845;
-  backdrop-filter: blur(9px);
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 20px;
-}
-.panel {
-  background: #f4f5eb;
-  width: 620px;
-  max-height: 90dvh;
-  overflow: auto;
-  border: 1px solid #fff9;
-  border-radius: 22px;
-  padding: 32px 36px;
-  box-shadow: 0 20px 100px #23352b30;
-}
-.panel-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.panel-top .eyebrow {
-  font-size: 8px;
-  color: #7d8b7b;
-  letter-spacing: 1.7px;
-}
-.panel-top button {
-  padding: 5px;
-  display: flex;
-}
-.panel h2 {
-  font-family: Georgia, serif;
-  font-size: 32px;
-  font-weight: 400;
-  letter-spacing: -1px;
-  margin: 24px 0 12px;
-}
-.panel > p {
-  font-size: 12px;
-  color: #7a877b;
-  line-height: 1.7;
-}
-.world-options {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 12px;
-  margin-top: 28px;
-}
-.world-option {
-  text-align: left;
-  border: 1px solid #dce3d4;
-  border-radius: 12px;
-  padding: 10px;
-  overflow: hidden;
-}
-.world-option.is-selected {
-  border-color: #6b8b6e;
-  background: #eaf0e1;
-}
-.world-art {
-  display: flex;
-  height: 100px;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-  border-radius: 5px;
-  background: linear-gradient(160deg, #a4c6c8, #b8c9a0);
-  color: #5c816c;
-}
-.world-art > span {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  font-size: 8px;
-}
-/* Each scenery card previews the drive's colour and atmosphere. */
-.coast .world-art {
-  background: linear-gradient(155deg, #acd7ed 32%, #488876 33%, #517d42 48%, #237e9c 49%, #82bfc7);
-  color: #e3f3ec;
-}
-.cyber .world-art {
-  background: linear-gradient(155deg, #091725 20%, #244157 55%, #115f71 56%, #131c33 75%, #844569);
-  color: #90edf1;
-}
-.world-option strong {
-  font-size: 12px;
-  font-weight: 400;
-  margin-top: 15px;
-  display: block;
-}
-.world-option small {
-  font-size: 9px;
-  line-height: 1.6;
-  color: #788472;
-  display: block;
-  margin-top: 6px;
-  min-height: 30px;
-}
-.option-action {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  font-size: 7px;
-  letter-spacing: 1px;
-  margin-top: 15px;
-}
-.setting-label {
-  display: block;
-  font-size: 9px;
-  letter-spacing: 1.2px;
-  color: #7c8877;
-  margin: 27px 0 12px;
-}
-.segmented {
-  display: flex;
-  padding: 5px;
-  border: 1px solid #dce1d5;
-  border-radius: 9px;
-  gap: 4px;
-  background: #e9edde;
-}
-.segmented button {
-  flex: 1;
-  padding: 11px;
-  font-size: 11px;
-  border-radius: 6px;
-}
-.segmented .selected {
-  background: #f9faf2;
-  box-shadow: 0 2px 5px #23352b08;
-}
-.setting-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  border-top: 1px solid #dce1d5;
-  padding: 22px 0 4px;
-  margin-top: 22px;
-  font-size: 12px;
-}
-.setting-row > span {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.toggle {
-  width: 30px;
-  height: 18px;
-  border-radius: 12px;
-  background: #ced5c7;
-  position: relative;
-}
-.toggle:after {
-  content: "";
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  top: 3px;
-  left: 3px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 0.2s;
-}
-.toggle.on {
-  background: #7f9a77;
-}
-.toggle.on:after {
-  transform: translateX(12px);
-}
-.controls-list {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 16px;
-  margin: 27px 0;
-}
-.controls-list > div {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 10px;
-}
-.controls-list kbd {
-  border-color: #cbd4c3;
-  min-width: 65px;
-  text-align: center;
-  background: #e9edde;
-}
-.about-note {
-  border-top: 1px solid #dce1d5;
-  padding-top: 22px;
-  font-size: 10px;
-  color: #7c8877;
-  line-height: 1.8;
-}
-.about-note strong {
-  font-weight: 500;
-  color: #4e6652;
-}
-.about-note p {
-  margin: 7px 0;
-}
-.about-note a {
-  display: block;
-  text-decoration: underline;
-  color: #4e6652;
-}
-.about-note > span {
-  display: block;
-  font-size: 8px;
-  margin-top: 15px;
-}
-.toast {
-  position: absolute;
-  bottom: 197px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 13px 21px;
-  border-radius: 25px;
-  z-index: 25;
-  font-size: 11px;
-  white-space: nowrap;
-  animation: appear 0.25s ease-out;
-  pointer-events: none;
-}
-.pause-indicator {
-  position: absolute;
-  left: 50%;
-  top: 170px;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-radius: 25px;
-  padding: 12px 17px;
-  font-size: 11px;
-  z-index: 7;
-}
-.pause-indicator button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 15px;
-  font-size: 10px;
-}
-/* Settings remain out of the way until requested. */
-.panel {
-  color: #e9e8e1;
-  background: #202a2ced;
-  border: 1px solid #fff2;
-  box-shadow: 0 30px 100px #0005;
-  border-radius: 14px;
-}
-.modal-backdrop {
-  background: #0a101752;
-  backdrop-filter: blur(7px);
-}
-.panel-top .eyebrow,
-.panel > p,
-.setting-label,
-.world-option small,
-.about-note {
-  color: #a4b0a7;
-}
-.panel h2 {
-  font-family: Arial, Helvetica, sans-serif;
-  font-size: 28px;
-  font-weight: 300;
-  letter-spacing: -0.5px;
-}
-.world-option {
-  border-color: #ffffff20;
-}
-.world-option.is-selected {
-  background: #8b9f7e20;
-  border-color: #aab79e;
-}
-.segmented {
-  background: #ffffff06;
-  border-color: #ffffff18;
-}
-.segmented .selected {
-  background: #ffffff18;
-  box-shadow: none;
-}
-.setting-row,
-.about-note {
-  border-color: #ffffff18;
-}
-.about-note strong,
-.about-note a {
-  color: #d8dfce;
-}
-.controls-list kbd {
-  border-color: #ffffff25;
-  background: #ffffff08;
-}
-.toggle {
-  background: #ffffff25;
-}
-.toggle.on {
-  background: #819879;
-}
-.toast {
-  position: absolute;
-  bottom: 34px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 25;
-  font-size: 11px;
-  padding: 11px 18px;
-  border-radius: 30px;
-  white-space: nowrap;
-  box-shadow: none;
-}
-.pause-indicator {
-  position: absolute;
-  left: 50%;
-  top: 30px;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border-radius: 25px;
-  padding: 12px 17px;
-  font-size: 11px;
-  z-index: 7;
-}
-.pause-indicator button {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-left: 15px;
-  font-size: 10px;
-}
+  position: absolute; left: var(--left); right: var(--right); bottom: calc(24px + var(--bottom));
+  display: flex; align-items: center; justify-content: space-between;
+}
+.minimal-footer nav { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 28px; padding: 4px; background: #101a2480; }
+.minimal-footer nav button { display: grid; place-items: center; width: 44px; height: 44px; flex-shrink: 0; border-radius: 50%; color: #dae3e8; }
+.minimal-footer nav svg { width: 18px; height: 18px; }
+.key-guide { display: flex; gap: 24px; font-size: 10px; color: #e1e9ee; }
+.key-guide i { font-style: normal; color: var(--muted); margin-left: 6px; }
+.touch-controls, .touch-guide { display: none; }
+
+/* Small navigation cards keep planet travel and launch progress easy to scan. */
+.planet-map { position: absolute; left: var(--left); top: 126px; width: 120px; height: 120px; border-radius: 50%; }
+.planet-map > span { position: absolute; top: -21px; width: 150px; left: -15px; text-align: center; font-size: 10px; color: var(--muted); }
+.planet-map svg { width: 100%; height: 100%; fill: none; stroke: #b9d8ed40; stroke-width: .7; overflow: hidden; border-radius: 50%; }
+.planet-map .map-car { fill: #eef6f8; stroke: none; }
+.planet-map .map-road { stroke: #e6c996; stroke-width: 4; }
+.planet-map button { position: absolute; transform: translate(-50%, -50%); min-width: 44px; min-height: 44px; padding: 4px; font-size: 10px; border: 1px solid var(--line); border-radius: 50%; background: #182a39; }
+.launch-progress { position: absolute; left: var(--left); top: 268px; width: 180px; padding: 12px; border-radius: 12px; font-size: 11px; line-height: 1.5; }
+.launch-progress span, .launch-progress small { display: block; }
+.launch-progress small { color: var(--muted); font-size: 10px; }
+.launch-progress progress { display: block; width: 100%; height: 4px; margin: 10px 0; accent-color: var(--accent); }
+.planet-travel { position: absolute; top: 106px; right: var(--right); width: 224px; padding: 12px; border-radius: 16px; font-size: 11px; }
+.planet-travel > span { display: block; line-height: 1.5; margin-bottom: 10px; color: var(--muted); }
+.planet-travel > div { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.planet-travel button { min-height: 44px; border: 1px solid var(--line); border-radius: 9px; font-size: 11px; text-transform: capitalize; }
+.planet-travel button[aria-pressed="true"] { background: #cce6d91a; border-color: #cce6d980; }
+.planet-travel .space-return { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 8px; text-transform: none; }
+.planet-travel .landing-ready { border-color: #eccb91; color: #ffe1ac; background: #eccb9114; }
+.return-to-road { position: absolute; left: 50%; bottom: calc(100px + var(--bottom)); transform: translateX(-50%); display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 16px; border: 1px solid var(--line); border-radius: 24px; background: #101a24d9; font-size: 11px; white-space: nowrap; }
+
+/* All dialogs use one calm style and scroll inside the screen on small phones. */
+.modal-backdrop { position: absolute; inset: 0; z-index: 20; display: grid; place-items: center; padding: max(20px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left)); background: #070e1866; backdrop-filter: blur(10px); }
+.panel { width: min(540px, 100%); max-height: 100%; overflow: auto; overscroll-behavior: contain; padding: 28px; border: 1px solid var(--line); border-radius: 24px; background: var(--panel); box-shadow: 0 24px 90px #0005; }
+.panel-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.eyebrow { font-size: 9px; letter-spacing: 1.8px; color: var(--muted); }
+.panel-top button { display: grid; place-items: center; min-width: 44px; min-height: 44px; border-radius: 50%; background: #ffffff08; }
+.panel h2 { margin: 20px 0 12px; font-size: 28px; font-weight: 400; letter-spacing: -.8px; }
+.panel > p { font-size: 13px; line-height: 1.7; color: var(--muted); }
+.setting-label { display: block; margin: 24px 0 12px; font-size: 10px; letter-spacing: 1px; color: var(--muted); }
+.segmented { display: flex; gap: 4px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: #ffffff04; }
+.segmented button { flex: 1; min-height: 44px; padding: 8px; font-size: 11px; border-radius: 8px; }
+.segmented .selected { background: #ffffff14; }
+.world-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 24px; }
+.world-option { text-align: left; border: 1px solid var(--line); border-radius: 14px; padding: 10px; overflow: hidden; }
+.world-option.is-selected { border-color: #cce6d980; background: #cce6d90a; }
+.world-art { display: grid; place-items: center; height: 110px; position: relative; border-radius: 8px; }
+.world-art > span { position: absolute; top: 8px; left: 8px; font-size: 9px; }
+.coast .world-art { background: linear-gradient(155deg, #acd7ed 32%, #488876 33%, #517d42 48%, #237e9c 49%, #82bfc7); color: #e3f3ec; }
+.cyber .world-art { background: linear-gradient(155deg, #091725 20%, #244157 55%, #115f71 56%, #131c33 75%, #844569); color: #90edf1; }
+.world-option strong { display: block; margin-top: 14px; font-size: 13px; font-weight: 500; }
+.world-option small { display: block; min-height: 36px; margin-top: 6px; font-size: 11px; line-height: 1.6; color: var(--muted); }
+.option-action { display: flex; align-items: center; justify-content: space-between; margin-top: 12px; font-size: 8px; letter-spacing: 1px; }
+.world-done { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; min-height: 48px; margin-top: 24px; padding: 12px; border-radius: 12px; background: var(--accent); color: #16251f; font-size: 12px; }
+@media (hover: hover) { .world-done:hover:not(:disabled) { background: #e2f4ea; } }
+.setting-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; width: 100%; border-top: 1px solid var(--line); padding: 20px 0; margin-top: 12px; font-size: 12px; text-align: left; }
+.setting-row > span { display: flex; align-items: center; gap: 12px; }
+.toggle { width: 34px; height: 20px; flex-shrink: 0; border-radius: 12px; background: #ffffff25; position: relative; }
+.toggle::after { content: ""; position: absolute; width: 14px; height: 14px; top: 3px; left: 3px; border-radius: 50%; background: #fff; transition: transform .2s; }
+.toggle.on { background: #648c79; }
+.toggle.on::after { transform: translateX(14px); }
+.controls-list { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin: 24px 0; }
+.controls-list > div { display: flex; align-items: center; gap: 12px; font-size: 11px; line-height: 1.5; }
+.controls-list kbd { border: 1px solid var(--line); border-radius: 6px; min-width: 66px; text-align: center; padding: 6px; background: #ffffff06; }
+.about-note { border-top: 1px solid var(--line); padding-top: 20px; font-size: 11px; line-height: 1.8; color: var(--muted); }
+.about-note strong { color: var(--ink); font-weight: 500; }
+.about-note a { display: block; margin-top: 10px; text-decoration: underline; text-underline-offset: 3px; }
+.about-note > span { display: block; margin-top: 16px; font-size: 10px; }
+.panel.welcome-guide { width: min(400px, 100%); }
+.welcome-guide h2 { margin-top: 4px; }
+.welcome-guide .controls-list { grid-template-columns: 1fr; }
+.welcome-guide .guide-extras { font-size: 11px; }
+
+/* Short status messages leave gameplay buttons available. */
+.toast { position: absolute; left: 50%; top: 94px; transform: translateX(-50%); z-index: 25; width: max-content; max-width: min(420px, calc(100% - 32px)); padding: 12px 18px; border-radius: 16px; font-size: 12px; line-height: 1.5; text-align: center; pointer-events: none; }
+.pause-indicator { position: absolute; left: 50%; top: 28px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 28px; font-size: 11px; z-index: 7; white-space: nowrap; }
+.pause-indicator button { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 8px; border-radius: 16px; color: var(--accent); }
+.loading { position: absolute; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 20px; padding: 24px; background: #101a24; }
+.loading .brand-mark { font-size: 22px; font-weight: 300; letter-spacing: 8px; }
+.loading-spinner { width: 28px; height: 28px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: loading-spin .9s linear infinite; }
+.loading p { max-width: 300px; font-size: 12px; line-height: 1.8; text-align: center; color: var(--muted); }
+.loading button { min-height: 44px; text-decoration: underline; }
+@keyframes loading-spin { to { transform: rotate(360deg); } }
+
+/* Phones have three separate rows: flight dock, pedals, then utility controls. */
 @media (max-width: 760px), (pointer: coarse), (max-width: 960px) and (max-height: 500px) {
-  .experience {
-    --mobile-left: max(16px, env(safe-area-inset-left));
-    --mobile-right: max(16px, env(safe-area-inset-right));
-    --mobile-bottom: env(safe-area-inset-bottom, 0px);
-  }
-  .minimal-header {
-    top: max(16px, env(safe-area-inset-top));
-    left: var(--mobile-left);
-    right: var(--mobile-right);
-    align-items: center;
-    gap: 12px;
-  }
-  .minimal-header h1 {
-    font-size: 18px;
-    letter-spacing: 5px;
-  }
-  .minimal-header h1 span {
-    font-size: 7px;
-    letter-spacing: 1.5px;
-  }
-  .location-control {
-    min-height: 44px;
-    font-size: 11px;
-    gap: 5px;
-  }
-  .location-control > span {
-    display: none;
-  }
-  .minimal-telemetry {
-    left: var(--mobile-left);
-    bottom: calc(152px + var(--mobile-bottom));
-  }
-  .speed strong {
-    font-size: 40px;
-  }
-  .trip {
-    max-width: 140px;
-    font-size: 9px;
-  }
-  .flight-control {
-    right: var(--mobile-right);
-    bottom: calc(152px + var(--mobile-bottom));
-    width: 142px;
-    column-gap: 8px;
-  }
-  .cruise,
-  .flight-control > button {
-    min-height: 44px;
-    min-width: 44px;
-  }
-  .cruise {
-    margin-top: 4px;
-  }
-  .flight-control kbd,
-  .altitude-controls kbd,
-  .return-to-road kbd {
-    display: none;
-  }
-  .minimal-footer {
-    left: var(--mobile-left);
-    right: var(--mobile-right);
-    bottom: calc(8px + var(--mobile-bottom));
-    justify-content: center;
-  }
-  .minimal-footer nav {
-    width: 100%;
-    max-width: 360px;
-    justify-content: space-between;
-    gap: 2px;
-  }
-  .minimal-footer nav button {
-    min-width: 44px;
-    min-height: 44px;
-    align-items: center;
-    justify-content: center;
-    padding: 12px;
-  }
-  .key-guide {
-    display: none;
-  }
-  .touch-controls {
-    display: flex;
-    position: absolute;
-    left: var(--mobile-left);
-    right: var(--mobile-right);
-    bottom: calc(72px + var(--mobile-bottom));
-    justify-content: space-between;
-    pointer-events: none;
-  }
-  .touch-controls > div {
-    display: flex;
-    gap: 8px;
-  }
-  .touch-controls button {
-    pointer-events: auto;
-    border: 1px solid #ffffff35;
-    background: #16212b80;
-    backdrop-filter: blur(8px);
-    border-radius: 16px;
-    height: 52px;
-    min-width: 48px;
-    padding: 0 8px;
-    font-size: 11px;
-    touch-action: none;
-  }
-  .touch-controls button:active {
-    background: #eae8e340;
-    border-color: #ffffff90;
-  }
-  .touch-controls > div:first-child button {
-    font-size: 22px;
-  }
-  .toast {
-    top: calc(80px + env(safe-area-inset-top, 0px));
-    bottom: auto;
-    font-size: 10px;
-    line-height: 1.4;
-    white-space: normal;
-    text-align: center;
-    width: max-content;
-    max-width: min(320px, calc(100% - var(--mobile-left) - var(--mobile-right)));
-  }
-  .panel {
-    width: min(620px, 100%);
-    padding: 20px;
-    max-height: 100%;
-    overscroll-behavior: contain;
-  }
-  .modal-backdrop {
-    padding: max(12px, env(safe-area-inset-top))
-      max(12px, env(safe-area-inset-right))
-      max(12px, env(safe-area-inset-bottom))
-      max(12px, env(safe-area-inset-left));
-  }
-  .panel-top button,
-  .segmented button,
-  .world-done {
-    min-height: 44px;
-    min-width: 44px;
-  }
-  .segmented button {
-    padding: 10px 5px;
-  }
-  .panel h2 {
-    font-size: 25px;
-  }
-  .world-options {
-    gap: 7px;
-  }
-  .world-option {
-    padding: 7px;
-  }
-  .world-art {
-    height: 80px;
-  }
-  .world-option strong {
-    font-size: 12px;
-  }
-  .world-option small {
-    font-size: 10px;
-    min-height: 38px;
-  }
-  .option-action {
-    font-size: 8px;
-    letter-spacing: 0.5px;
-  }
-  .touch-guide {
-    display: block;
-    font-size: 12px;
-    line-height: 1.7;
-    color: #c9d2c7;
-    margin-top: 22px;
-  }
-  .controls-list {
-    grid-template-columns: 1fr;
-    gap: 14px 8px;
-  }
-  .controls-list > div {
-    font-size: 9px;
-    gap: 7px;
-  }
-  .controls-list kbd {
-    min-width: 48px;
-    font-size: 7px;
-  }
-  .pause-indicator {
-    top: calc(80px + env(safe-area-inset-top, 0px));
-    white-space: nowrap;
-    font-size: 10px;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation: none !important;
-    transition: none !important;
-  }
-}
-.altitude-controls {
-  position: absolute;
-  right: 38px;
-  bottom: 182px;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 10px;
-  color: #eee9df;
-}
-.altitude-controls > span {
-  opacity: 0.45;
-}
-.altitude-controls button {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 8px 0;
-  opacity: 0.75;
-  touch-action: none;
-}
-.altitude-controls kbd {
-  font: inherit;
-  font-size: 9px;
-  border: 1px solid #ffffff30;
-  border-radius: 3px;
-  padding: 2px 4px;
-}
-.altitude-controls button:active {
-  color: #ffc691;
-  opacity: 1;
-}
-@media (max-width: 760px), (pointer: coarse), (max-width: 960px) and (max-height: 500px) {
-  .altitude-controls {
-    right: var(--mobile-right);
-    bottom: calc(252px + var(--mobile-bottom));
-  }
-  .altitude-controls > span {
-    display: none;
-  }
-  .altitude-controls button {
-    min-height: 44px;
-    min-width: 64px;
-    padding: 10px;
-    border: 1px solid #ffffff25;
-    border-radius: 6px;
-    background: #15202b40;
-  }
+  .experience { --edge: 16px; }
+  .minimal-header { top: max(16px, env(safe-area-inset-top)); gap: 8px; }
+  .minimal-header h1 { font-size: 17px; letter-spacing: 4px; }
+  .minimal-header h1 span { font-size: 8px; letter-spacing: 1px; }
+  .location-control { gap: 6px; padding: 8px 12px; font-size: 10px; }
+  .location-control > span, .key-guide, .keyboard-guide, .controls-list, .pause-indicator,
+  .experience kbd { display: none; }
+  .minimal-telemetry { bottom: calc(148px + var(--bottom)); max-width: calc(100% - 208px); }
+  .speed strong { font-size: 42px; }
+  .trip { font-size: 10px; margin-top: 8px; overflow-wrap: anywhere; }
+  .cruise { font-size: 10px; gap: 8px; }
+  .flight-control { bottom: calc(148px + var(--bottom)); width: 172px; padding: 10px; gap: 8px; border-radius: 16px; }
+  .flight-control > button, .altitude-controls button { font-size: 11px; gap: 5px; }
+  .altitude-controls { gap: 8px; }
+  .gas-label { font-size: 9px; }
+  .minimal-footer { bottom: calc(8px + var(--bottom)); justify-content: center; }
+  .minimal-footer nav { width: 252px; justify-content: space-between; }
+  .touch-controls { position: absolute; display: flex; left: var(--left); right: var(--right); bottom: calc(76px + var(--bottom)); justify-content: space-between; gap: 12px; pointer-events: none; }
+  .touch-controls > div { display: flex; gap: 8px; }
+  .touch-controls button { pointer-events: auto; min-width: 44px; height: 56px; padding: 0 10px; border: 1px solid #ffffff35; border-radius: 14px; background: #101a24cc; backdrop-filter: blur(12px); font-size: 11px; touch-action: none; }
+  .touch-controls > div:first-child button { font-size: 22px; }
+  .touch-controls button:active { background: #cce6d940; border-color: var(--accent); }
+  .touch-controls button[aria-label="Go"] { color: var(--accent); background: #29483bd9; }
+  .planet-map { top: 108px; width: 96px; height: 96px; }
+  .planet-map > span { font-size: 9px; width: 128px; left: -16px; }
+  .launch-progress { top: 220px; width: 128px; font-size: 10px; padding: 10px; }
+  .planet-travel { top: 88px; width: 172px; padding: 10px; font-size: 10px; }
+  .planet-travel button { font-size: 10px; }
+  .planet-travel > div { gap: 4px; }
+  .return-to-road { top: 88px; bottom: auto; }
+  .toast, .pause-indicator { top: calc(74px + env(safe-area-inset-top, 0px)); }
+  .toast { font-size: 11px; }
+  .panel { padding: 22px; border-radius: 20px; }
+  .panel h2 { font-size: 25px; }
+  .world-options { gap: 8px; }
+  .world-art { height: 84px; }
+  .world-option { padding: 8px; }
+  .world-option small { font-size: 10px; }
+  .touch-guide { display: block; font-size: 12px; line-height: 1.8; color: var(--muted); }
 }
 
-.return-to-road {
-  position: absolute;
-  left: 50%;
-  bottom: 40px;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 44px;
-  padding: 10px 16px;
-  border: 1px solid #ffffff35;
-  border-radius: 24px;
-  background: #17212b85;
-  backdrop-filter: blur(8px);
-  color: #fff;
-  font-size: 11px;
-  white-space: nowrap;
-}
-.return-to-road kbd {
-  font: inherit;
-  opacity: 0.65;
-}
-@media (max-width: 760px), (pointer: coarse), (max-width: 960px) and (max-height: 500px) {
-  .return-to-road {
-    top: calc(136px + env(safe-area-inset-top, 0px));
-    bottom: auto;
-  }
+/* Narrow phones retain a clear gap between steering and all three pedals. */
+@media (max-width: 360px) {
+  .experience { --edge: 12px; }
+  .touch-controls { gap: 8px; }
+  .touch-controls > div { gap: 6px; }
+  .touch-controls button { padding: 0 8px; }
+  .flight-control { width: 160px; }
+  .planet-travel { width: 164px; }
+  .minimal-telemetry { max-width: calc(100% - 192px); }
+  .speed strong { font-size: 36px; }
+  .speed { gap: 6px; }
 }
 
+/* Landscape places utility controls between the two hands to save height. */
 @media (max-height: 500px) and (orientation: landscape) and (max-width: 960px),
   (max-height: 500px) and (orientation: landscape) and (pointer: coarse) {
-  .minimal-header h1 span,
-  .trip {
-    display: none;
-  }
-  .minimal-telemetry,
-  .flight-control {
-    bottom: calc(132px + var(--mobile-bottom, 0px));
-  }
-  .speed strong {
-    font-size: 32px;
-  }
-  .altitude-controls {
-    bottom: calc(224px + var(--mobile-bottom, 0px));
-  }
-  .pause-indicator {
-    top: max(16px, env(safe-area-inset-top));
-  }
-  .return-to-road {
-    top: calc(80px + env(safe-area-inset-top, 0px));
-  }
+  .minimal-header { top: max(10px, env(safe-area-inset-top)); }
+  .minimal-header h1 span, .trip { display: none; }
+  .minimal-footer { left: 50%; right: auto; transform: translateX(-50%); bottom: calc(12px + var(--bottom)); }
+  .minimal-footer nav { width: 252px; }
+  .touch-controls { bottom: calc(16px + var(--bottom)); }
+  .minimal-telemetry, .flight-control { bottom: calc(88px + var(--bottom)); }
+  .speed strong { font-size: 32px; }
+  .planet-map { top: 84px; width: 64px; height: 64px; }
+  .launch-progress { left: calc(var(--left) + 96px); top: 90px; width: 120px; }
+  .planet-travel { top: 68px; left: calc(var(--left) + 104px); right: auto; width: 172px; padding: 8px; }
+  .experience:has(.planet-travel) .launch-progress { display: none; }
+  .planet-travel > span { margin-bottom: 6px; }
+  .planet-travel .space-return { min-height: 44px; margin-top: 6px; }
+  .planet-map button { display: none; }
+  .pause-indicator { display: none; }
+  .toast { top: 66px; max-width: 280px; }
+  .return-to-road { top: 12px; }
 }
 
-.world-done {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  width: 100%;
-  margin-top: 22px;
-  padding: 13px;
-  border-radius: 8px;
-  background: #e4e9db;
-  color: #263326;
-  font-size: 12px;
+/* Compact landscape phones put the utility bar in the free header space. */
+@media (max-width: 640px) and (max-height: 500px) and (orientation: landscape) {
+  .minimal-footer { top: max(10px, env(safe-area-inset-top)); bottom: auto; }
 }
 
-/* A compact opening guide keeps the first drive one input away. */
-.panel.welcome-guide {
-  width: min(100%, 400px);
-  padding: 26px;
+/* Motion-sensitive players get still loading and immediate control feedback. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
-.welcome-guide h2 {
-  margin: 0 0 10px;
-  font-size: 25px;
-}
-.welcome-guide > p {
-  font-size: 13px;
-  line-height: 1.5;
-}
-.welcome-guide .controls-list {
-  grid-template-columns: 1fr;
-  margin: 24px 0;
-  gap: 16px;
-}
-.welcome-guide .controls-list > div {
-  font-size: 13px;
-  gap: 20px;
-}
-.welcome-guide .controls-list kbd {
-  min-width: 64px;
-  font-size: 11px;
-}
-.welcome-guide .guide-extras {
-  font-size: 11px;
-  margin-bottom: 20px;
-}
-.welcome-guide .world-done {
-  margin-top: 0;
-}
-
-/* Destination controls stay above driving controls on wide and narrow screens. */
-.planet-travel {
-  position: absolute; top: 104px; right: 38px; max-width: calc(100vw - 32px);
-  padding: 12px 14px; border: 1px solid #ffffff26; border-radius: 12px;
-  background: #06101ccc; backdrop-filter: blur(12px); color: #e2eaf3;
-  font-size: 11px;
-}
-.planet-travel > span { display: block; margin-bottom: 9px; }
-.planet-travel > div { display: flex; gap: 6px; }
-.planet-travel button { padding: 9px 10px; border-radius: 6px; border: 1px solid #ffffff26; text-transform: capitalize; }
-.planet-travel button[aria-pressed="true"] { background: #b9daf42b; border-color: #adcce7; }
-.planet-travel button:disabled { opacity: .6; }
-.planet-travel .space-return { border: 0; margin-top: 8px; padding: 5px 0; font-size: 10px; opacity: .7; }
-@media (max-width: 760px) {
-  .planet-travel { top: 84px; right: 16px; padding: 9px; }
-  .planet-travel button { min-height: 44px; }
-}
-
-/* Centre altitude labels and keep both touch targets below the car on mobile. */
-.altitude-controls button { justify-content: center; text-align: center; }
-@media (max-width: 760px), (pointer: coarse) {
-  .altitude-controls { bottom: calc(124px + var(--mobile-bottom, 0px)); gap: 8px; }
-  .altitude-controls button { min-width: 68px; min-height: 44px; }
-  .flight-control, .minimal-telemetry { bottom: calc(182px + var(--mobile-bottom, 0px)); }
-  .planet-travel { font-size: 10px; padding: 8px; }
-  .planet-travel > span { margin-bottom: 4px; }
-  .planet-travel .space-return { display: block; min-height: 30px; margin-top: 3px; }
-}
-/* Short landscape screens put altitude controls along the top edge, away from the car. */
-@media (max-height: 500px) and (orientation: landscape) {
-  .altitude-controls { top: 64px; bottom: auto; right: 16px; }
-  .planet-travel { left: 16px; right: auto; top: 64px; }
-  .flight-control, .minimal-telemetry { bottom: calc(132px + var(--mobile-bottom, 0px)); }
-}
-
-/* Separate landing and return actions; highlight landing when the surface is close. */
-.planet-travel .space-return { display: block; width: 100%; text-align: center; min-height: 34px; margin-top: 8px; white-space: normal; }
-.planet-travel .landing-ready { border: 1px solid #c6dbea; border-radius: 8px; animation: landing-pulse 1.8s ease-in-out infinite; }
-@keyframes landing-pulse { 50% { background: #b6d7ed26; box-shadow: 0 0 16px #c6dbea35; } }
-@media (prefers-reduced-motion: reduce) { .planet-travel .landing-ready { animation: none; } }
-
-/* Launch guidance and the small compass stay in the upper corner, clear of the car. */
-.launch-progress { position:absolute; left:38px; top:110px; width:210px; padding:12px; background:#06101cbb; border:1px solid #ffffff26; border-radius:10px; font-size:11px; }
-.launch-progress span,.launch-progress small { display:block; }
-.launch-progress progress { display:block; width:100%; height:6px; margin:9px 0; accent-color:#c9e4f4; }
-.planet-map { position:absolute; left:38px; top:105px; width:140px; height:140px; background:#06101cbb; border:1px solid #ffffff26; border-radius:50%; }
-.planet-map > span { position:absolute; top:-19px; width:100%; text-align:center; font-size:10px; color:#d4e4ef; }
-.planet-map svg { width:100%; height:100%; fill:none; stroke:#b9d8ed55; stroke-width:.7; }
-.planet-map .map-car { fill:#ecf4fb; stroke:none; }
-.planet-map button { position:absolute; transform:translate(-50%,-50%); color:#e5eff7; background:#142333; border:1px solid #9bb9cf66; border-radius:12px; padding:5px; font-size:10px; text-transform:capitalize; }
-@media(max-width:760px) { .launch-progress { left:16px; top:88px; width:160px; font-size:10px; } .planet-map { left:16px; top:104px; width:112px; height:112px; } }
-@media(max-height:500px) and (orientation:landscape) { .planet-map { left:50%; top:26px; width:100px; height:100px; } .launch-progress { left:50%; top:24px; width:170px; } }
-
-/* A clear landing cue appears before the short final approach and stops after activation. */
-.planet-travel .landing-ready { opacity:1; color:#fff4db; font-weight:600; border:2px solid #f0c582; background:#9c65283b; animation:landing-pulse 1.2s ease-in-out infinite; }
-@keyframes landing-pulse { 0%,100% { box-shadow:0 0 0 0 #f0c58200; border-color:#bda179; } 50% { box-shadow:0 0 0 5px #f0c58225,0 0 22px #f0c58244; border-color:#ffe1a8; background:#b77c4355; } }
-@media(prefers-reduced-motion:reduce) { .planet-travel .landing-ready { animation:none; border-color:#ffe1a8; } }
-
-/* Keep road bends readable inside the always-visible map. */
-.planet-map svg { overflow:hidden; border-radius:50%; }
-.planet-map .map-road { stroke:#efc987; stroke-width:4; fill:none; }
-.launch-progress { top:270px; }

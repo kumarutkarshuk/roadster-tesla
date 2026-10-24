@@ -392,7 +392,8 @@ export default function Roadster() {
       <div className="atmosphere" />
       <header className="minimal-header">
         <h1>
-          roadster<span>an endless escape</span>
+          {/* A small pause label leaves mobile controls and travel cards clear. */}
+          roadster<span>{settings.paused && !showGuide ? "paused · resume below" : "an endless escape"}</span>
         </h1>
         <button
           className="location-control"
@@ -473,6 +474,29 @@ export default function Roadster() {
           <Icon name="reset" size={16} />
           flip <kbd>X</kbd>
         </button>
+        {settings.flying && (
+          <div
+            className="altitude-controls"
+            aria-label="Flight altitude controls"
+          >
+            {/* Flight buttons share one dock so touch targets never collide. */}
+            {[
+              ["q", "descend"],
+              ["e", "climb"],
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                onPointerDown={(event) => holdButton(event, key)}
+                onPointerUp={releaseButton}
+                onPointerCancel={releaseButton}
+                onLostPointerCapture={releaseButton}
+              >
+                <kbd>{key.toUpperCase()}</kbd>
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
         <div
           className="gas-track"
           role="meter"
@@ -536,10 +560,10 @@ export default function Roadster() {
           </button>
         </nav>
       </footer>
-      {/* Keep actual altitude progress visible when climb is released or landing begins. */}
-      {(settings.flying || telemetry.altitude > 0) && telemetry.altitude < 100000 && (
+      {/* Show Earth launch progress without adding clutter during a planet landing. */}
+      {(settings.flying || telemetry.altitude > 0) && telemetry.altitude < 100000 && (!telemetry.planet || telemetry.planet === "earth") && (
         <section className="launch-progress" aria-label="Climb to visit planets">
-          <span>Hold E / climb · visit planets</span>
+          <span>Hold climb <kbd>E</kbd> to visit planets</span>
           <progress max={100000} value={Math.min(100000,telemetry.altitude)} aria-label="Altitude needed for planet travel" />
           <small>{(telemetry.altitude/1000).toFixed(1)} / 100 km · {Math.round(telemetry.altitude/1000)}%</small>
         </section>
@@ -559,52 +583,32 @@ export default function Roadster() {
       {(telemetry.landingReady || telemetry.altitude >= 100000 || (telemetry.planet && telemetry.planet !== "earth")) && (
         <section className="planet-travel" aria-label="Space destinations">
           <span>{telemetry.destination
-            ? `to ${telemetry.destination} · ${telemetry.travelProgress}% · hold W / Shift`
-            : telemetry.altitude < 1 ? `${telemetry.planet} surface · hold E to leave` : `near ${telemetry.planet ?? "earth"} · E / Q altitude`}</span>
-          <div>
-            {(["earth", "moon", "mars"] as const).map(planet => (
-              <button key={planet} aria-pressed={telemetry.destination === planet || (!telemetry.destination && telemetry.planet === planet)}
-                disabled={telemetry.altitude < 100000 || telemetry.planet === planet}
-                onClick={() => { update({ destination: planet, flying: true }); notify(`Turn towards ${planet}. Hold W or Shift to approach. Arrival approaches directly and lands automatically. E or Q cancels landing.`); }}>
-                {planet}
-              </button>
-            ))}
-          </div>
+            ? `to ${telemetry.destination} · ${telemetry.travelProgress}%`
+            : telemetry.altitude < 1 ? `${telemetry.planet} surface · lift off to leave` : `near ${telemetry.planet ?? "earth"}`}</span>
+          {/* Planet choices appear only in space, where travel is available. */}
+          {telemetry.altitude >= 100000 && (
+            <div>
+              {(["earth", "moon", "mars"] as const).map(planet => (
+                <button key={planet} aria-pressed={telemetry.destination === planet || (!telemetry.destination && telemetry.planet === planet)}
+                  disabled={telemetry.altitude < 100000 || telemetry.planet === planet}
+                  onClick={() => { update({ destination: planet, flying: true }); notify(`Heading to ${planet}. Hold Go or boost to approach. Landing is automatic. Climb or descend cancels landing.`); }}>
+                  {planet}
+                </button>
+              ))}
+            </div>
+          )}
           {/* Landing follows the same ground contact and driving controls as Earth. */}
           {(telemetry.planet !== "earth" || telemetry.landingReady) && !telemetry.destination && (
             <button className={`space-return ${telemetry.landingReady ? "landing-ready" : ""}`} onClick={() => {
               update({ flying: false, cruise: false });
-              notify(`Landing on ${telemetry.planet}. Use W A S D to drive after touchdown.`);
+              notify(`Landing on ${telemetry.planet}. Drive after touchdown.`);
             }} disabled={telemetry.altitude < .1}>
-              {telemetry.altitude < .1 ? "Surface driving · WASD" : "Press Space · landing assist"}
+              {/* Touch players get a tap action; keyboards keep their shortcut. */}
+              {telemetry.altitude < .1 ? "Surface driving" : <>Landing assist <kbd>Space</kbd></>}
             </button>
           )}
-          <button className="space-return" onClick={returnToRoad}>Back to Earth road · B</button>
+          <button className="space-return" onClick={returnToRoad}>Back to Earth road <kbd>B</kbd></button>
         </section>
-      )}
-      {settings.flying && (
-        <div
-          className="altitude-controls"
-          aria-label="Flight altitude controls"
-        >
-          {/* Holding climb builds speed all the way into space. */}
-          <span>{telemetry.altitude >= 100000 ? "W / Shift approaches · E / Q altitude" : "hold climb to reach space"}</span>
-          {[
-            ["q", "descend"],
-            ["e", "climb"],
-          ].map(([key, label]) => (
-            <button
-              key={key}
-              onPointerDown={(event) => holdButton(event, key)}
-              onPointerUp={releaseButton}
-              onPointerCancel={releaseButton}
-              onLostPointerCapture={releaseButton}
-            >
-              <kbd>{key.toUpperCase()}</kbd>
-              {label}
-            </button>
-          ))}
-        </div>
       )}
       <div className="touch-controls">
         <div>
@@ -627,12 +631,13 @@ export default function Roadster() {
         <div>
           {[
             // Hold this pedal past a stop to back up.
-            ["s", "Brake / reverse"],
+            ["s", "Brake"],
             ["w", "Go"],
             ["shift", "Boost"],
           ].map(([key, label]) => (
             <button
               key={key}
+              aria-label={key === "s" ? "Brake / reverse" : label}
               onPointerDown={(e) => {
                 holdButton(e, key);
                 if (e.button === 0 && key !== "shift") update({ cruise: false });
@@ -680,7 +685,9 @@ export default function Roadster() {
         <div className="modal-backdrop">
           <section className="panel welcome-guide" role="dialog" aria-modal="true" aria-labelledby="welcome-title">
             <h2 id="welcome-title">Take the wheel.</h2>
-            <p>Press any driving key to begin.</p>
+            {/* The opening guide matches the controls available on each device. */}
+            <p className="keyboard-guide">Press any driving key to begin.</p>
+            <p className="touch-guide">Hold Go to move. Use the arrows to steer. Your controls stay within reach.</p>
             <div className="controls-list">
               {[
                 ["W / S", "Go / brake / reverse"],
@@ -690,7 +697,7 @@ export default function Roadster() {
                 ["E / Q", "Climb / descend"],
               ].map(([key, label]) => <div key={key}><kbd>{key}</kbd><span>{label}</span></div>)}
             </div>
-            <p className="guide-extras">X roll · P pause · B return · R reset</p>
+            <p className="guide-extras keyboard-guide">X roll · P pause · B return · R reset</p>
             <button className="world-done" autoFocus onClick={startDriving}>Start driving <Icon name="arrow" size={16} /></button>
           </section>
         </div>
@@ -775,7 +782,8 @@ export default function Roadster() {
             {panel === "settings" && (
               <>
                 <p>Set the mood. The road will take care of the rest.</p>
-                <button className="setting-row" onClick={toggleSound}>
+                {/* Expose the sound setting as an on/off switch to assistive tools. */}
+                <button className="setting-row" role="switch" aria-checked={sound} onClick={toggleSound}>
                   <span>
                     <Icon name="sound" /> Motor & thruster sound
                   </span>
@@ -799,11 +807,11 @@ export default function Roadster() {
                 <p>No score to chase. Just a road to follow.</p>
                 <div className="touch-guide">
                   {/* Explain the shared brake and reverse pedal for touch drivers. */}
-                  Hold the arrows to steer and Go or Brake / reverse to change speed.
-                  Keep holding Brake / reverse after stopping to back up.
+                  Hold the arrows to steer. Hold Go to move or Brake to slow down.
+                  Keep holding Brake after stopping to reverse.
                   Hold Boost for extra speed. You can steer and use a pedal at
                   the same time. Tap lift off to fly, then hold climb or descend
-                  to change altitude. Hold climb to build speed gradually into space. Turn with A/D to face a planet, or choose its button to turn towards it. Hold W, Shift or Go to travel. Arrival approaches directly and lands automatically. E or Q cancels landing; W then flies level. E and Q control altitude. Land on Moon or Mars to drive across the surface. B returns to Earth. Auto cruise keeps you moving hands-free.
+                  to change altitude. Hold climb to build speed gradually into space. Use the arrows to face a planet, or tap its button. Hold Go or Boost to travel. Landing is automatic. Climb or descend cancels landing. Tap Back to Earth road to return. Auto cruise keeps you moving hands-free.
                 </div>
                 <div className="controls-list">
                   {[
